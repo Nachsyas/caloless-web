@@ -12,6 +12,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel } from 'docx';
 import { saveAs } from 'file-saver';
+import Image from "next/image";
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"orders" | "menu" | "team" | "analytics" | "logs">("orders");
@@ -21,8 +22,8 @@ export default function AdminDashboard() {
   const [team, setTeam] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // State untuk form tambah anggota
-  const [newMember, setNewMember] = useState({ name: "", role: "" });
+  // SESUAIKAN DENGAN SKEMA DATABASE ASLI (Ada photo_url & order_priority)
+  const [newMember, setNewMember] = useState({ name: "", role: "", photo_url: "", order_priority: 5 });
 
   const supabase = createClient();
 
@@ -58,7 +59,7 @@ export default function AdminDashboard() {
   };
 
   const fetchTeam = async () => {
-    const { data } = await supabase.from("team_members").select("*").order("created_at", { ascending: true });
+    const { data } = await supabase.from("team_members").select("*").order("order_priority", { ascending: true });
     if (data) setTeam(data);
   };
 
@@ -79,30 +80,25 @@ export default function AdminDashboard() {
     if (!error) {
       toast.success("Harga diupdate!");
       insertLog("UPDATE_MENU", `Ubah harga menu ${name} menjadi Rp ${newPrice.toLocaleString('id-ID')}`);
-      fetchProducts();
     }
   };
 
-  // FUNGSI BARU: Update Stok
   const updateProductStock = async (id: string, name: string, currentStock: number, change: number) => {
-    const newStock = Math.max(0, currentStock + change); // Tidak boleh minus
+    const newStock = Math.max(0, currentStock + change);
     const { error } = await supabase.from("products").update({ stock: newStock }).eq("id", id);
     if (!error) {
-      toast.success("Stok berhasil disesuaikan!");
+      toast.success("Stok disesuaikan!");
       insertLog("UPDATE_STOK", `Ubah stok ${name} menjadi ${newStock} porsi`);
-      fetchProducts();
     }
   };
 
-  // FUNGSI BARU: CRUD Anggota Tim
   const handleAddMember = async () => {
     if (!newMember.name || !newMember.role) return toast.error("Nama dan Role wajib diisi!");
     const { error } = await supabase.from("team_members").insert([newMember]);
     if (!error) {
       toast.success("Anggota tim berhasil ditambahkan!");
       insertLog("TAMBAH_ANGGOTA", `Menambahkan ${newMember.name} sebagai ${newMember.role}`);
-      setNewMember({ name: "", role: "" });
-      fetchTeam();
+      setNewMember({ name: "", role: "", photo_url: "", order_priority: 5 });
     }
   };
 
@@ -111,11 +107,9 @@ export default function AdminDashboard() {
     if (!error) {
       toast.success("Anggota dihapus.");
       insertLog("HAPUS_ANGGOTA", `Menghapus anggota tim: ${name}`);
-      fetchTeam();
     }
   };
 
-  // --- LOGIKA ANALYTICS & EXPORT (TETAP SAMA) ---
   const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid");
   const historyOrders = orders.filter(o => o.status === "success");
 
@@ -136,7 +130,7 @@ export default function AdminDashboard() {
   });
   const itemSoldData = Object.keys(rawItemData).map(name => ({ name, Terjual: rawItemData[name] }));
 
-  const exportExcel = () => { /* Logika Excel sebelumnya */
+  const exportExcel = () => {
     try {
       const dataToExport = historyOrders.map(o => ({
         "Waktu Transaksi": o.created_at ? new Date(o.created_at).toLocaleString("id-ID") : "-",
@@ -144,18 +138,19 @@ export default function AdminDashboard() {
         "No. WhatsApp": o.customer_phone || "-",
         "Jenis Pesanan": o.delivery_type ? o.delivery_type.toUpperCase() : "-",
         "Rincian Menu": o.items_json ? o.items_json.map((i: any) => `${i.quantity}x ${i.name}`).join(", ") : "-",
-        "Subtotal": o.subtotal_amount || 0,
+        "Subtotal (Belanja)": o.subtotal_amount || 0,
         "Biaya Ongkir": o.shipping_fee || 0,
         "Grand Total": o.total_amount || 0
       }));
       const worksheet = XLSX.utils.json_to_sheet(dataToExport);
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Laporan Penjualan F&B");
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Laporan Penjualan");
       XLSX.writeFile(workbook, "Laporan_Keuangan_CALOLESS.xlsx");
-      insertLog("EXPORT_REPORT", "Unduh Laporan (Excel)");
+      insertLog("EXPORT_REPORT", "Mengunduh Laporan Keuangan (Excel)");
     } catch (e) { toast.error("Gagal Excel"); }
   };
-  const exportPDF = () => { /* Logika PDF sebelumnya */
+
+  const exportPDF = () => {
     try {
       const doc = new jsPDF();
       doc.setFontSize(18); doc.text("Laporan Keuangan CALOLESS", 14, 20);
@@ -168,7 +163,8 @@ export default function AdminDashboard() {
       insertLog("EXPORT_REPORT", "Unduh Laporan (PDF)");
     } catch (e) { }
   };
-  const exportWord = async () => { /* Logika Word sebelumnya */
+
+  const exportWord = async () => {
     try {
       const rows = historyOrders.map(o => new TableRow({
         children: [
@@ -198,7 +194,6 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      {/* TOPBAR NAVIGASI */}
       <div className="bg-white dark:bg-zinc-900 border-b p-4 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between items-center gap-4">
           <h1 className="text-2xl font-extrabold tracking-tight text-primary">CALOLESS <span className="text-zinc-500 font-medium">| Admin Center</span></h1>
@@ -213,7 +208,6 @@ export default function AdminDashboard() {
       </div>
 
       <div className="p-6 max-w-7xl mx-auto">
-        {/* TAB 1: PESANAN */}
         {activeTab === "orders" && (
           <div className="space-y-10 animate-in fade-in">
             <section className="space-y-4">
@@ -240,7 +234,6 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 2: MENU & STOK */}
         {activeTab === "menu" && (
           <div className="space-y-6 animate-in fade-in">
             <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Katalog Produk & Manajemen Stok</h2></div>
@@ -248,8 +241,6 @@ export default function AdminDashboard() {
               {products.map((p) => (
                 <div key={p.id} className="bg-white border rounded-2xl p-5 shadow-sm space-y-4">
                   <h3 className="font-bold text-lg">{p.name}</h3>
-
-                  {/* PENGATURAN HARGA */}
                   <div className="bg-zinc-50 p-3 rounded-lg border">
                     <p className="text-xs text-muted-foreground mb-2">Harga Jual</p>
                     <div className="flex items-center justify-between">
@@ -260,8 +251,6 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                   </div>
-
-                  {/* PENGATURAN STOK */}
                   <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
                     <p className="text-xs text-orange-600 mb-2 font-semibold">Sisa Stok (Porsi)</p>
                     <div className="flex items-center justify-between">
@@ -272,14 +261,12 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                   </div>
-
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* TAB 3: ANALYTICS */}
         {activeTab === "analytics" && (
           <div className="space-y-8 animate-in fade-in">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -303,7 +290,6 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 4: LOGS */}
         {activeTab === "logs" && (
           <div className="space-y-6 animate-in fade-in">
             <div className="flex items-center justify-between"><h2 className="text-2xl font-bold flex gap-2"><Activity /> Riwayat Aktivitas Sistem</h2></div>
@@ -313,7 +299,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 5: TIM (CRUD ANGGOTA) */}
+        {/* TAB 5: TIM (SUDAH DISESUAIKAN DENGAN SKEMA ASLI) */}
         {activeTab === "team" && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h2 className="text-2xl font-bold flex items-center gap-2"><Users className="w-6 h-6 text-primary" /> Manajemen Anggota Tim</h2>
@@ -324,21 +310,24 @@ export default function AdminDashboard() {
                 <h3 className="font-bold mb-4">Tambah Anggota Baru</h3>
                 <div className="space-y-4">
                   <input type="text" placeholder="Nama Lengkap" value={newMember.name} onChange={(e) => setNewMember({ ...newMember, name: e.target.value })} className="flex h-10 w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
-                  <input type="text" placeholder="Role / Posisi (cth: Hacker, Hustler)" value={newMember.role} onChange={(e) => setNewMember({ ...newMember, role: e.target.value })} className="flex h-10 w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
+                  <input type="text" placeholder="Role (cth: Hacker, Hustler)" value={newMember.role} onChange={(e) => setNewMember({ ...newMember, role: e.target.value })} className="flex h-10 w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
+                  <input type="text" placeholder="URL Foto (/team-1.png)" value={newMember.photo_url} onChange={(e) => setNewMember({ ...newMember, photo_url: e.target.value })} className="flex h-10 w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
+                  <input type="number" placeholder="Urutan (cth: 1)" value={newMember.order_priority} onChange={(e) => setNewMember({ ...newMember, order_priority: parseInt(e.target.value) })} className="flex h-10 w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
                   <Button onClick={handleAddMember} className="w-full gap-2 font-bold"><Plus className="w-4 h-4" /> Daftarkan Anggota</Button>
                 </div>
               </div>
 
-              {/* DAFTAR ANGGOTA */}
+              {/* DAFTAR ANGGOTA (DENGAN FOTO ASLI) */}
               <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {team.map((member) => (
                   <div key={member.id} className="bg-white dark:bg-zinc-900 border rounded-2xl p-5 shadow-sm flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-primary/10 text-primary rounded-full flex items-center justify-center font-black text-xl">
-                        {member.name.charAt(0).toUpperCase()}
+                      {/* FOTO PROFIL */}
+                      <div className="relative w-12 h-12 rounded-full overflow-hidden border">
+                        <Image src={member.photo_url || "/team-1.png"} alt={member.name} fill className="object-cover" sizes="48px" />
                       </div>
                       <div>
-                        <h4 className="font-bold">{member.name}</h4>
+                        <h4 className="font-bold leading-tight">{member.name}</h4>
                         <p className="text-xs text-muted-foreground">{member.role}</p>
                       </div>
                     </div>
