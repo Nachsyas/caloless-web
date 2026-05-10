@@ -101,14 +101,15 @@ export default function AdminDashboard() {
   const exportExcel = () => {
     try {
       const dataToExport = historyOrders.map(o => ({
-        "Waktu Transaksi": new Date(o.created_at).toLocaleString("id-ID"),
-        "Nama Pemesan": o.user_name,
-        "No. WhatsApp": o.customer_phone,
-        "Jenis Pesanan": o.delivery_type.toUpperCase(),
-        "Rincian Menu": o.items_json.map((i: any) => `${i.quantity}x ${i.name}`).join(", "),
-        "Subtotal (Belanja)": o.subtotal_amount,
-        "Biaya Ongkir": o.shipping_fee,
-        "Grand Total": o.total_amount
+        "Waktu Transaksi": o.created_at ? new Date(o.created_at).toLocaleString("id-ID") : "-",
+        "Nama Pemesan": o.user_name || "-",
+        "No. WhatsApp": o.customer_phone || "-",
+        // Tambahkan pelindung opsional (?) agar tidak crash jika datanya kosong
+        "Jenis Pesanan": o.delivery_type ? o.delivery_type.toUpperCase() : "-",
+        "Rincian Menu": o.items_json ? o.items_json.map((i: any) => `${i.quantity}x ${i.name}`).join(", ") : "-",
+        "Subtotal (Belanja)": o.subtotal_amount || 0,
+        "Biaya Ongkir": o.shipping_fee || 0,
+        "Grand Total": o.total_amount || 0
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(dataToExport);
@@ -119,6 +120,7 @@ export default function AdminDashboard() {
       insertLog("EXPORT_REPORT", "Mengunduh Laporan Keuangan (Format Excel)");
       toast.success("File Excel berhasil diunduh!");
     } catch (error) {
+      console.error("Excel Error:", error);
       toast.error("Gagal membuat file Excel.");
     }
   };
