@@ -10,27 +10,21 @@ const mockProducts: Product[] = [
     name: "Zensum (Dimsum Sehat)",
     description: "Dimsum kukus rendah kalori dengan campuran bahan sehat premium.",
     price: 15000,
-    calories: 150,
     image_url: "/hero.png",
-    is_available: true,
   },
   {
     id: "2",
     name: "Ubi Drink",
     description: "Minuman ungu segar dari ekstrak ubi dengan pemanis Stevia dan Low Fat Milk.",
     price: 12000,
-    calories: 90,
     image_url: "/hero.png",
-    is_available: true,
   },
   {
     id: "3",
     name: "Ubi Cheese Chia Seeds",
     description: "Dessert ubi ungu dengan paduan keju rendah lemak dan chia seeds kaya serat.",
     price: 18000,
-    calories: 200,
     image_url: "/hero.png",
-    is_available: true,
   }
 ];
 
