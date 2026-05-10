@@ -143,7 +143,6 @@ export default function AdminDashboard() {
     if (!newMember.name || !newMember.role) return toast.error("Nama & Role wajib diisi!");
 
     if (isEditing && editId) {
-      // LOGIKA UPDATE
       const { error } = await supabase.from("team_members").update(newMember).eq("id", editId);
       if (!error) {
         toast.success("Identitas anggota berhasil diperbarui!");
@@ -153,7 +152,6 @@ export default function AdminDashboard() {
         toast.error("Gagal update data.");
       }
     } else {
-      // LOGIKA CREATE
       const { error } = await supabase.from("team_members").insert([newMember]);
       if (!error) {
         toast.success("Anggota baru ditambahkan!");
@@ -178,7 +176,6 @@ export default function AdminDashboard() {
     });
     setEditId(member.id);
     setIsEditing(true);
-    // Auto scroll ke form di mobile
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -190,7 +187,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // --- EXPORT & ANALYTICS (Sama seperti sebelumnya) ---
+  // --- EXPORT & ANALYTICS ---
   const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid");
   const historyOrders = orders.filter(o => o.status === "success");
 
@@ -219,13 +216,55 @@ export default function AdminDashboard() {
         "Waktu": o.created_at ? new Date(o.created_at).toLocaleString("id-ID") : "-",
         "Pemesan": o.user_name || "-",
         "WhatsApp": o.customer_phone || "-",
+        "Tipe": o.delivery_type ? o.delivery_type.toUpperCase() : "-",
         "Total": o.total_amount || 0
       }));
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Laporan");
       XLSX.writeFile(wb, "Laporan_Caloless.xlsx");
+      insertLog("EXPORT_REPORT", "Mengunduh Laporan Keuangan (Excel)");
     } catch (e) { toast.error("Gagal Excel"); }
+  };
+
+  const exportPDF = () => {
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(18); doc.text("Laporan Keuangan CALOLESS", 14, 20);
+      autoTable(doc, {
+        startY: 30,
+        head: [['Tanggal', 'Pemesan', 'Total']],
+        body: historyOrders.map(o => [new Date(o.created_at).toLocaleDateString("id-ID"), o.user_name, `Rp ${o.total_amount}`]),
+      });
+      doc.save("Laporan_CALOLESS.pdf");
+      insertLog("EXPORT_REPORT", "Unduh Laporan (PDF)");
+    } catch (e) { }
+  };
+
+  const exportWord = async () => {
+    try {
+      const rows = historyOrders.map(o => new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph(new Date(o.created_at).toLocaleDateString("id-ID"))] }),
+          new TableCell({ children: [new Paragraph(o.user_name)] }),
+          new TableCell({ children: [new Paragraph(`Rp ${o.total_amount}`)] })
+        ]
+      }));
+      const table = new Table({
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Tanggal", bold: true })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Pemesan", bold: true })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Total", bold: true })] })] })
+            ]
+          }), ...rows
+        ]
+      });
+      const doc = new Document({ sections: [{ children: [new Paragraph({ text: "Laporan CALOLESS", heading: HeadingLevel.HEADING_1 }), table] }] });
+      const blob = await Packer.toBlob(doc); saveAs(blob, "Laporan_CALOLESS.docx");
+      insertLog("EXPORT_REPORT", "Unduh Laporan (Word)");
+    } catch (e) { }
   };
 
   if (loading) return <div className="p-10 text-center font-bold">Sinkronisasi Data...</div>;
@@ -247,31 +286,70 @@ export default function AdminDashboard() {
       </div>
 
       <div className="p-6 max-w-7xl mx-auto">
+
+        {/* TAB 1: PESANAN */}
         {activeTab === "orders" && (
-          <div className="space-y-10 animate-in fade-in">
+          <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4">
+            {/* PESANAN AKTIF */}
             <section className="space-y-4">
-              <div className="flex items-center gap-2 text-orange-600 font-bold"><Clock className="w-5 h-5" /><h2>Pesanan Aktif ({activeOrders.length})</h2></div>
+              <div className="flex items-center gap-2 text-orange-600 font-bold">
+                <Clock className="w-5 h-5" /><h2>Pesanan Aktif ({activeOrders.length})</h2>
+              </div>
               <div className="grid gap-4">
                 {activeOrders.map((o) => (
                   <div key={o.id} className="bg-white dark:bg-zinc-900 border rounded-2xl p-5 shadow-sm flex flex-col md:flex-row justify-between gap-6">
                     <div className="space-y-2">
                       <div className="flex gap-2"><Badge variant={o.status === "paid" ? "default" : "outline"}>{o.status}</Badge></div>
                       <h3 className="font-bold text-lg">{o.user_name} <span className="text-sm font-normal text-muted-foreground">({o.customer_phone})</span></h3>
-                      <div className="text-sm space-y-1">{o.items_json?.map((i: any, idx: number) => (<p key={idx} className="flex gap-2"><Package className="w-4 h-4 text-primary" /> {i.quantity}x {i.name}</p>))}</div>
+                      <div className="text-sm space-y-1">
+                        {o.items_json?.map((i: any, idx: number) => (
+                          <p key={idx} className="flex gap-2"><Package className="w-4 h-4 text-primary" /> {i.quantity}x {i.name}</p>
+                        ))}
+                      </div>
                       <p className="text-xs text-muted-foreground flex gap-1"><MapPin className="w-3 h-3" /> {o.address}</p>
                     </div>
                     <div className="flex flex-col items-end justify-between gap-4">
                       <p className="text-xl font-black text-primary">Rp {o.total_amount?.toLocaleString("id-ID")}</p>
-                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="bg-green-600 hover:bg-green-700 text-white gap-2 rounded-full"><CheckCircle2 className="w-4 h-4" /> Pesanan Selesai</Button>
+                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="bg-green-600 hover:bg-green-700 text-white gap-2 rounded-full">
+                        <CheckCircle2 className="w-4 h-4" /> Pesanan Selesai
+                      </Button>
                     </div>
                   </div>
                 ))}
+                {activeOrders.length === 0 && <div className="text-center py-10 bg-white border rounded-xl text-muted-foreground">Belum ada pesanan masuk.</div>}
+              </div>
+            </section>
+
+            {/* RIWAYAT PESANAN */}
+            <section className="space-y-4 pt-4 border-t">
+              <div className="flex items-center gap-2 text-zinc-500 font-bold">
+                <History className="w-5 h-5" /><h2>Riwayat Pembelian</h2>
+              </div>
+              <div className="overflow-x-auto border rounded-2xl bg-white">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-zinc-50 border-b">
+                    <tr>
+                      <th className="px-6 py-4">Pemesan</th>
+                      <th className="px-6 py-4">Item & Qty</th>
+                      <th className="px-6 py-4 text-right">Total Pendapatan</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {historyOrders.map((o) => (
+                      <tr key={o.id}>
+                        <td className="px-6 py-4">{o.user_name}</td>
+                        <td className="px-6 py-4 text-xs">{o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join(", ")}</td>
+                        <td className="px-6 py-4 text-right font-bold text-primary">Rp {o.total_amount?.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </section>
           </div>
         )}
 
-        {/* TAB MENU & STOK */}
+        {/* TAB 2: MENU & STOK */}
         {activeTab === "menu" && (
           <div className="space-y-6 animate-in fade-in">
             <h2 className="text-2xl font-bold">Katalog Produk & Stok</h2>
@@ -279,51 +357,116 @@ export default function AdminDashboard() {
               {products.map((p) => (
                 <div key={p.id} className="bg-white border rounded-2xl p-5 shadow-sm space-y-4">
                   <h3 className="font-bold text-lg">{p.name}</h3>
-                  <div className="bg-orange-50 p-3 rounded-lg border border-orange-100 flex items-center justify-between">
-                    <span className="font-bold text-xl">{p.stock ?? 100} Porsi</span>
-                    <div className="flex gap-1">
-                      <Button variant="secondary" size="sm" onClick={() => updateProductStock(p.id, p.name, p.stock ?? 100, -1)}>-</Button>
-                      <Button variant="secondary" size="sm" onClick={() => updateProductStock(p.id, p.name, p.stock ?? 100, 1)}>+</Button>
+
+                  {/* EDIT HARGA */}
+                  <div className="bg-zinc-50 p-3 rounded-lg border">
+                    <p className="text-xs text-muted-foreground mb-1 text-center font-bold">Harga Jual</p>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-primary">Rp {p.price.toLocaleString()}</span>
+                      <div className="flex gap-1">
+                        <Button variant="outline" size="sm" onClick={() => updateProductPrice(p.id, p.name, p.price - 1000)}>-1k</Button>
+                        <Button variant="outline" size="sm" onClick={() => updateProductPrice(p.id, p.name, p.price + 1000)}>+1k</Button>
+                      </div>
                     </div>
                   </div>
+
+                  {/* EDIT STOK */}
+                  <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
+                    <p className="text-xs text-orange-600 mb-1 text-center font-bold">Sisa Stok (Porsi)</p>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xl">{p.stock ?? 100}</span>
+                      <div className="flex gap-1">
+                        <Button variant="secondary" size="sm" onClick={() => updateProductStock(p.id, p.name, p.stock ?? 100, -1)}>-</Button>
+                        <Button variant="secondary" size="sm" onClick={() => updateProductStock(p.id, p.name, p.stock ?? 100, 1)}>+</Button>
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* TAB ANALYTICS */}
+        {/* TAB 3: ANALYTICS & EXPORT */}
         {activeTab === "analytics" && (
           <div className="space-y-8 animate-in fade-in">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
               <h2 className="text-2xl font-bold">Analisa Performa</h2>
-              <Button onClick={exportExcel} variant="outline" className="gap-2 border-green-200 text-green-600"><FileSpreadsheet className="w-4 h-4" /> Excel</Button>
+              {/* TOMBOL EXPORT LENGKAP */}
+              <div className="flex gap-2">
+                <Button onClick={exportPDF} variant="outline" className="gap-2 border-red-200 text-red-600 hover:bg-red-50"><FileText className="w-4 h-4" /> PDF</Button>
+                <Button onClick={exportExcel} variant="outline" className="gap-2 border-green-200 text-green-600 hover:bg-green-50"><FileSpreadsheet className="w-4 h-4" /> Excel</Button>
+                <Button onClick={exportWord} variant="outline" className="gap-2 border-blue-200 text-blue-600 hover:bg-blue-50"><File className="w-4 h-4" /> Word</Button>
+              </div>
             </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* GRAFIK 1: PENDAPATAN */}
               <div className="bg-white border rounded-2xl p-6 shadow-sm h-80">
+                <h3 className="font-bold mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-primary" /> Tren Pendapatan</h3>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={dailyRevenueData}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="date" /><YAxis /><Tooltip formatter={(val: any) => `Rp ${Number(val).toLocaleString()}`} /><Line type="monotone" dataKey="Pendapatan" stroke="#8b5cf6" strokeWidth={3} /></LineChart>
+                  <LineChart data={dailyRevenueData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="date" />
+                    <YAxis tickFormatter={(val) => `${val / 1000}k`} />
+                    <Tooltip formatter={(value: any) => `Rp ${Number(value).toLocaleString("id-ID")}`} />
+                    <Line type="monotone" dataKey="Pendapatan" stroke="#8b5cf6" strokeWidth={3} dot={{ r: 6 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* GRAFIK 2: ITEM TERJUAL */}
+              <div className="bg-white border rounded-2xl p-6 shadow-sm h-80">
+                <h3 className="font-bold mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-orange-500" /> Item Terlaris (Biji)</h3>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={itemSoldData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="Terjual" fill="#f97316" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB LOGS */}
+        {/* TAB 4: LOGS */}
         {activeTab === "logs" && (
           <div className="space-y-6 animate-in fade-in">
-            <h2 className="text-2xl font-bold flex gap-2"><Activity /> Audit Log Aktivitas</h2>
-            <div className="bg-white border rounded-2xl shadow-sm overflow-hidden max-h-[600px] overflow-y-auto">
-              <table className="w-full text-sm text-left"><thead className="bg-zinc-50 sticky top-0 z-10"><tr><th className="px-6 py-4">Waktu</th><th className="px-6 py-4">Aksi</th><th className="px-6 py-4">Keterangan</th></tr></thead><tbody className="divide-y">{logs.map((l) => (<tr key={l.id}><td className="px-6 py-4 text-xs">{new Date(l.created_at).toLocaleString()}</td><td className="px-6 py-4"><Badge variant="secondary">{l.action_type}</Badge></td><td className="px-6 py-4">{l.description}</td></tr>))}</tbody></table>
+            <h2 className="text-2xl font-bold flex gap-2"><Activity className="text-primary" /> Audit Log Aktivitas</h2>
+            <div className="bg-white border rounded-2xl shadow-sm overflow-hidden max-h-[600px] overflow-y-auto custom-scrollbar">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-zinc-50 sticky top-0 z-10 border-b">
+                  <tr>
+                    <th className="px-6 py-4">Waktu Detail</th>
+                    <th className="px-6 py-4">Aksi</th>
+                    <th className="px-6 py-4">Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {logs.map((l) => (
+                    <tr key={l.id} className="hover:bg-zinc-50/50">
+                      <td className="px-6 py-4 font-mono text-xs text-muted-foreground">{new Date(l.created_at).toLocaleString("id-ID")}</td>
+                      <td className="px-6 py-4"><Badge variant="secondary">{l.action_type}</Badge></td>
+                      <td className="px-6 py-4 font-medium">{l.description}</td>
+                    </tr>
+                  ))}
+                  {logs.length === 0 && <tr><td colSpan={3} className="text-center py-10">Belum ada log.</td></tr>}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
 
-        {/* TAB TIM (CRUD LENGKAP: CREATE, READ, UPDATE, DELETE) */}
+        {/* TAB 5: TIM (CRUD LENGKAP: CREATE, READ, UPDATE, DELETE) */}
         {activeTab === "team" && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
-            <h2 className="text-2xl font-bold flex gap-2"><Users /> Anggota Kelompok 7</h2>
+            <h2 className="text-2xl font-bold flex gap-2"><Users className="text-primary" /> Anggota Kelompok 7</h2>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
               {/* FORM DINAMIS (TAMBAH / EDIT) */}
               <div className="lg:col-span-1 bg-white border rounded-2xl p-6 shadow-sm h-fit space-y-4 border-primary/20 bg-primary/5">
                 <div className="flex justify-between items-center">
