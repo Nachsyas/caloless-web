@@ -3,39 +3,115 @@
 import { useCartStore } from "@/store/useCartStore";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, Minus, Plus, Trash2, MapPin } from "lucide-react";
+import { ShoppingCart, Minus, Plus, Trash2, MapPin, Store, Truck, Map } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import Image from "next/image";
-import { useState, useEffect } from "react"; // Tambahkan useEffect
+import { useState, useEffect } from "react";
 import Script from "next/script";
+import { toast } from "sonner";
+
+// Koordinat UIN Malang (Latitude, Longitude)
+const UIN_MALANG_COORDS = { lat: -7.951381, lon: 112.607424 };
+
+// Haversine Formula untuk menghitung jarak (dalam KM)
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const R = 6371; // Radius bumi dalam KM
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
 
 export function CartDrawer() {
-  const {
-    items,
-    removeItem,
-    updateQuantity,
-    getTotalItems,
-    getSubtotal,
-    getDiscount,
-    getShippingFee,
-    getTotal,
-    isUinMalang,
-    setIsUinMalang,
-    clearCart
-  } = useCartStore();
+  const { items, removeItem, updateQuantity, getTotalItems, getSubtotal, getDiscount, clearCart } = useCartStore();
 
+  const [isMounted, setIsMounted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isMounted, setIsMounted] = useState(false); // State untuk Hydration Fix
+  const [isCheckingLocation, setIsCheckingLocation] = useState(false);
 
-  const totalItems = getTotalItems();
+  // State untuk Form Pembeli
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [deliveryType, setDeliveryType] = useState<"pickup" | "delivery">("pickup");
+  const [address, setAddress] = useState("");
 
-  // Jalankan ini setelah komponen mendarat di browser
+  // State untuk Ongkir
+  const [distanceKm, setDistanceKm] = useState<number | null>(null);
+  const [calculatedShipping, setCalculatedShipping] = useState(0);
+
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
+  // Fungsi untuk mengecek alamat ke API OpenStreetMap
+  const checkAddressAndCalculateFee = async () => {
+    if (!address || address.length < 5) {
+      toast.error("Alamat terlalu pendek. Masukkan alamat lengkap di Malang.");
+      return;
+    }
+
+    setIsCheckingLocation(true);
+    try {
+      // Tambahkan keyword Malang agar pencarian lebih akurat
+      const searchQuery = encodeURIComponent(`${address}, Malang`);
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}`);
+      const data = await response.json();
+
+      if (data && data.length > 0) {
+        // Ambil hasil pencarian pertama yang paling relevan
+        const targetLat = parseFloat(data[0].lat);
+        const targetLon = parseFloat(data[0].lon);
+
+        // Hitung jarak dengan Haversine
+        const distance = calculateDistance(UIN_MALANG_COORDS.lat, UIN_MALANG_COORDS.lon, targetLat, targetLon);
+        setDistanceKm(distance);
+
+        // Logika Ongkos Kirim:
+        // Radius <= 2km = Gratis. Lebih dari itu = Rp 2000 tiap 2km
+        if (distance <= 2) {
+          setCalculatedShipping(0);
+          toast.success(`Jarak ${distance.toFixed(1)} km (Radius UIN). Bebas Ongkir!`);
+        } else {
+          // Contoh jarak 4.5km -> lebihnya 2.5km -> ceil(2.5/2) = 2 -> 2 * 2000 = 4000
+          const excessDistance = distance - 2;
+          const feeMultiplier = Math.ceil(excessDistance / 2);
+          const fee = feeMultiplier * 2000;
+          setCalculatedShipping(fee);
+          toast.success(`Jarak ${distance.toFixed(1)} km. Ongkir: Rp ${fee.toLocaleString("id-ID")}`);
+        }
+      } else {
+        toast.error("Alamat tidak ditemukan di peta. Coba perjelas nama jalan/kecamatannya.");
+        setDistanceKm(null);
+        setCalculatedShipping(0);
+      }
+    } catch (error) {
+      console.error("Geocoding error:", error);
+      toast.error("Gagal mengecek lokasi. Coba lagi nanti.");
+    } finally {
+      setIsCheckingLocation(false);
+    }
+  };
+
+  // Kalkulasi Total Keseluruhan
+  const subtotal = getSubtotal();
+  const discount = getDiscount();
+  const finalTotal = subtotal - discount + (deliveryType === "delivery" ? calculatedShipping : 0);
+
   const handleCheckout = async () => {
+    if (!customerName || !customerPhone) {
+      toast.error("Mohon isi Nama dan Nomor WhatsApp.");
+      return;
+    }
+    if (deliveryType === "delivery" && distanceKm === null) {
+      toast.error("Silakan cek lokasi alamatmu terlebih dahulu untuk menghitung ongkir.");
+      return;
+    }
+
     setIsLoading(true);
     try {
       const response = await fetch('/api/checkout', {
@@ -43,13 +119,14 @@ export function CartDrawer() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items,
-          total: getTotal(),
-          discount: getDiscount(),
-          shippingFee: getShippingFee(),
+          total: finalTotal,
+          discount: discount,
+          shippingFee: deliveryType === "delivery" ? calculatedShipping : 0,
           customerDetails: {
-            first_name: "Customer Caloless", // Hardcoded for demo, normally from form
-            email: "halo@caloless.id",
-            phone: "081234567890"
+            first_name: customerName,
+            phone: customerPhone,
+            // Kita selipkan catatan pengiriman ke kolom alamat
+            address: deliveryType === "pickup" ? "Ambil di Tempat (UIN Malang)" : `${address} (Jarak: ${distanceKm?.toFixed(1)}km)`
           }
         })
       });
@@ -57,38 +134,27 @@ export function CartDrawer() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
 
-      // Trigger Snap popup
       // @ts-ignore
       if (window.snap) {
         // @ts-ignore
         window.snap.pay(data.token, {
-          onSuccess: function (result: any) {
-            console.log("Payment success", result);
+          onSuccess: function () {
             clearCart();
-            alert("Pembayaran berhasil! Terima kasih telah membeli produk CALOLESS.");
+            toast.success("Pembayaran Berhasil! Pesanan akan segera diproses.");
           },
-          onPending: function (result: any) {
-            console.log("Payment pending", result);
-            alert("Menunggu pembayaran Anda.");
-          },
-          onError: function (result: any) {
-            console.log("Payment error", result);
-            alert("Pembayaran gagal!");
-          },
-          onClose: function () {
-            console.log("Customer closed the popup");
-          }
+          onPending: function () { toast.info("Menunggu Pembayaran."); },
+          onError: function () { toast.error("Pembayaran Gagal."); },
+          onClose: function () { console.log("Snap closed."); }
         });
-      } else {
-        alert("Sistem pembayaran belum siap. Silakan refresh halaman.");
       }
-    } catch (error) {
-      console.error("Failed to checkout", error);
-      alert("Checkout gagal: " + (error as Error).message);
+    } catch (error: any) {
+      toast.error("Checkout gagal: " + error.message);
     } finally {
       setIsLoading(false);
     }
   };
+
+  if (!isMounted) return null;
 
   return (
     <>
@@ -96,123 +162,173 @@ export function CartDrawer() {
       <Sheet>
         <SheetTrigger render={<Button variant="ghost" size="icon" className="relative cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full w-10 h-10 transition-colors" />}>
           <ShoppingCart className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
-
-          {/* HYDRATION FIX: Tambahkan isMounted di sini */}
-          {isMounted && totalItems > 0 && (
-            <span className="absolute top-0 right-0 bg-primary text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center translate-x-1/4 -translate-y-1/4 border-2 border-white dark:border-zinc-950">
-              {totalItems}
+          {getTotalItems() > 0 && (
+            <span className="absolute top-0 right-0 bg-primary text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center translate-x-1/4 -translate-y-1/4 border-2 border-white">
+              {getTotalItems()}
             </span>
           )}
         </SheetTrigger>
         <SheetContent className="w-full sm:max-w-md flex flex-col p-0">
-          <SheetHeader className="p-6 border-b">
-            <SheetTitle className="text-2xl font-bold flex items-center gap-2">
-              Keranjang Belanja
-
-              {/* HYDRATION FIX: Tambahkan isMounted juga di badge total keranjang dalam Drawer */}
-              {isMounted && (
-                <span className="bg-primary/10 text-primary text-sm px-2 py-0.5 rounded-full">
-                  {totalItems} item
-                </span>
-              )}
-            </SheetTitle>
+          <SheetHeader className="p-4 border-b shrink-0">
+            <SheetTitle className="text-xl font-bold">Keranjang & Checkout</SheetTitle>
           </SheetHeader>
 
-          <ScrollArea className="flex-1 p-6">
-            {/* HYDRATION FIX: Pastikan konten keranjang hanya dirender jika isMounted true */}
-            {!isMounted || items.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-                <ShoppingCart className="w-16 h-16 mb-4 opacity-20" />
+          <ScrollArea className="flex-1 px-4 py-2 custom-scrollbar">
+            {items.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
+                <ShoppingCart className="w-12 h-12 mb-2 opacity-20" />
                 <p>Keranjang kamu masih kosong</p>
               </div>
             ) : (
-              <div className="space-y-6">
-                {items.map((item) => (
-                  <div key={item.id} className="flex gap-4">
-                    <div className="relative w-24 h-24 rounded-2xl overflow-hidden bg-secondary/30 shrink-0 border border-border/50 shadow-sm">
-                      <Image src={item.image_url || "/hero.png"} alt={item.name} fill className="object-cover" />
-                    </div>
-                    <div className="flex-1 flex flex-col justify-between py-1">
-                      <div>
-                        <h4 className="font-bold text-sm leading-tight line-clamp-2">{item.name}</h4>
-                        <p className="text-primary font-bold mt-1.5">Rp {item.price.toLocaleString("id-ID")}</p>
+              <div className="space-y-6 pb-6">
+                {/* 1. DAFTAR PESANAN */}
+                <div className="space-y-4">
+                  {items.map((item) => (
+                    <div key={item.id} className="flex gap-3">
+                      <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-secondary border">
+                        <Image src={item.image_url || "/hero.png"} alt={item.name} fill className="object-cover" sizes="80px" />
                       </div>
-                      <div className="flex items-center justify-between mt-3">
-                        <div className="flex items-center border border-border rounded-lg bg-secondary/30 overflow-hidden">
-                          <button className="h-8 w-8 flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors" onClick={() => updateQuantity(item.id, item.quantity - 1)}>
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="w-8 text-center text-sm font-semibold">{item.quantity}</span>
-                          <button className="h-8 w-8 flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors" onClick={() => updateQuantity(item.id, item.quantity + 1)}>
-                            <Plus className="w-3.5 h-3.5" />
+                      <div className="flex-1 flex flex-col justify-between py-1">
+                        <div>
+                          <h4 className="font-bold text-sm leading-tight line-clamp-1">{item.name}</h4>
+                          <p className="text-primary font-bold text-sm mt-1">Rp {item.price.toLocaleString("id-ID")}</p>
+                        </div>
+                        <div className="flex items-center justify-between mt-2">
+                          <div className="flex items-center border rounded-lg bg-secondary/30">
+                            <button className="h-7 w-7 flex justify-center items-center" onClick={() => updateQuantity(item.id, item.quantity - 1)}><Minus className="w-3 h-3" /></button>
+                            <span className="w-6 text-center text-xs font-semibold">{item.quantity}</span>
+                            <button className="h-7 w-7 flex justify-center items-center" onClick={() => updateQuantity(item.id, item.quantity + 1)}><Plus className="w-3 h-3" /></button>
+                          </div>
+                          <button className="text-red-500 hover:bg-red-50 p-1.5 rounded-md" onClick={() => removeItem(item.id)}>
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
-                        <button className="h-8 w-8 flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors" onClick={() => removeItem(item.id)}>
-                          <Trash2 className="w-4 h-4" />
-                        </button>
                       </div>
                     </div>
+                  ))}
+                </div>
+
+                <Separator />
+
+                {/* 2. FORM DATA PEMBELI */}
+                <div className="space-y-4">
+                  <h3 className="font-bold text-sm flex items-center gap-2">Data Pemesan</h3>
+                  <div className="grid gap-3">
+                    <input
+                      type="text"
+                      placeholder="Nama Lengkap"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Nomor WhatsApp aktif"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    />
                   </div>
-                ))}
+                </div>
+
+                {/* 3. METODE PENGIRIMAN */}
+                <div className="space-y-4">
+                  <h3 className="font-bold text-sm flex items-center gap-2">Metode Pengambilan</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setDeliveryType("pickup")}
+                      className={`flex flex-col items-center justify-center gap-2 p-3 border rounded-xl transition-all ${deliveryType === "pickup" ? "border-primary bg-primary/5 text-primary" : "hover:bg-secondary/50 text-muted-foreground"}`}
+                    >
+                      <Store className="w-6 h-6" />
+                      <span className="text-xs font-bold">Ambil di UIN</span>
+                    </button>
+                    <button
+                      onClick={() => { setDeliveryType("delivery"); setDistanceKm(null); }}
+                      className={`flex flex-col items-center justify-center gap-2 p-3 border rounded-xl transition-all ${deliveryType === "delivery" ? "border-primary bg-primary/5 text-primary" : "hover:bg-secondary/50 text-muted-foreground"}`}
+                    >
+                      <Truck className="w-6 h-6" />
+                      <span className="text-xs font-bold">Delivery</span>
+                    </button>
+                  </div>
+
+                  {/* FORM ALAMAT (Jika Delivery) */}
+                  {deliveryType === "delivery" && (
+                    <div className="bg-secondary/20 p-3 rounded-xl border border-border mt-3 space-y-3">
+                      <p className="text-xs text-muted-foreground flex items-start gap-1">
+                        <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                        Radius &le; 2km UIN Malang = Gratis! Selebihnya Rp 2.000 / 2km.
+                      </p>
+                      <textarea
+                        placeholder="Masukkan alamat lengkap (cth: Jl. Sigura-gura No. 10, Lowokwaru, Malang)"
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      />
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="w-full gap-2 border-primary/20"
+                        onClick={checkAddressAndCalculateFee}
+                        disabled={isCheckingLocation || !address}
+                      >
+                        <Map className="w-4 h-4" />
+                        {isCheckingLocation ? "Melacak Lokasi..." : "Cek Lokasi & Ongkir"}
+                      </Button>
+
+                      {distanceKm !== null && (
+                        <div className="bg-white dark:bg-zinc-900 border p-2 rounded-lg text-xs flex justify-between items-center shadow-sm">
+                          <span>Jarak ke UIN: <strong>{distanceKm.toFixed(1)} km</strong></span>
+                          <span className={calculatedShipping === 0 ? "text-green-600 font-bold" : "text-primary font-bold"}>
+                            {calculatedShipping === 0 ? "GRATIS" : `+ Rp ${calculatedShipping.toLocaleString("id-ID")}`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </ScrollArea>
 
-          {isMounted && items.length > 0 && (
-            <div className="p-6 border-t bg-secondary/10">
-              {/* Promo Selector */}
-              <div className="mb-5 bg-white dark:bg-zinc-900 border rounded-2xl p-4 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="bg-primary/10 p-2.5 rounded-xl shrink-0">
-                    <MapPin className="w-5 h-5 text-primary" />
-                  </div>
-                  <div className="flex-1">
-                    <h5 className="text-sm font-bold">Pengiriman UIN Malang?</h5>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-snug">Nikmati <span className="font-semibold text-primary">Gratis Ongkir</span> untuk area kampus!</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                    <input type="checkbox" className="sr-only peer" checked={isUinMalang} onChange={(e) => setIsUinMalang(e.target.checked)} />
-                    <div className="w-11 h-6 bg-zinc-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
-                  </label>
-                </div>
-              </div>
-
-              <div className="space-y-3.5 text-sm">
+          {/* 4. TOTAL & CHECKOUT BUTTON */}
+          {items.length > 0 && (
+            <div className="p-5 border-t bg-secondary/10 shrink-0">
+              <div className="space-y-2 text-sm mb-4">
                 <div className="flex justify-between text-muted-foreground">
-                  <span>Subtotal</span>
-                  <span className="font-medium text-foreground">Rp {getSubtotal().toLocaleString("id-ID")}</span>
+                  <span>Subtotal Pesanan</span>
+                  <span className="font-medium">Rp {subtotal.toLocaleString("id-ID")}</span>
                 </div>
-
-                {getDiscount() > 0 && (
-                  <div className="flex justify-between text-green-600 font-medium bg-green-500/10 p-2 rounded-lg -mx-2 px-2">
+                {discount > 0 && (
+                  <div className="flex justify-between text-green-600 font-medium">
                     <span>Promo (Beli 5 Gratis 1)</span>
-                    <span>- Rp {getDiscount().toLocaleString("id-ID")}</span>
+                    <span>- Rp {discount.toLocaleString("id-ID")}</span>
                   </div>
                 )}
-
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Ongkir</span>
-                  {isUinMalang ? (
-                    <span className="text-green-600 font-bold bg-green-500/10 px-2 py-0.5 rounded-md">Gratis</span>
-                  ) : (
-                    <span className="font-medium text-foreground">Rp {getShippingFee().toLocaleString("id-ID")}</span>
-                  )}
-                </div>
-
-                <Separator className="my-3" />
-
-                <div className="flex justify-between items-center text-lg font-bold">
-                  <span>Total Belanja</span>
-                  <span className="text-2xl text-primary">Rp {getTotal().toLocaleString("id-ID")}</span>
+                {deliveryType === "delivery" && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Ongkos Kirim</span>
+                    {distanceKm === null ? (
+                      <span className="text-orange-500 italic text-xs">Cek alamat dulu</span>
+                    ) : calculatedShipping === 0 ? (
+                      <span className="text-green-600 font-bold">Gratis</span>
+                    ) : (
+                      <span className="font-medium">Rp {calculatedShipping.toLocaleString("id-ID")}</span>
+                    )}
+                  </div>
+                )}
+                <Separator className="my-2" />
+                <div className="flex justify-between items-center text-base font-bold">
+                  <span>Total Pembayaran</span>
+                  <span className="text-xl text-primary">Rp {finalTotal.toLocaleString("id-ID")}</span>
                 </div>
               </div>
 
               <Button
-                className="w-full h-14 rounded-full text-base font-bold mt-6 shadow-lg shadow-primary/25 hover:scale-[1.02] transition-transform"
-                disabled={items.length === 0 || isLoading}
+                className="w-full h-12 rounded-full text-base font-bold shadow-lg"
+                disabled={isLoading || (deliveryType === "delivery" && distanceKm === null)}
                 onClick={handleCheckout}
               >
-                {isLoading ? "Memproses..." : "Checkout Sekarang"}
+                {isLoading ? "Memproses..." : "Bayar Sekarang"}
               </Button>
             </div>
           )}
