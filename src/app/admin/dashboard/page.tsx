@@ -168,9 +168,10 @@ export default function AdminDashboard() {
         rows: [
           new TableRow({
             children: [
-              new TableCell({ children: [new Paragraph({ text: "Tanggal", bold: true })] }),
-              new TableCell({ children: [new Paragraph({ text: "Nama Pemesan", bold: true })] }),
-              new TableCell({ children: [new Paragraph({ text: "Grand Total Pendapatan", bold: true })] }),
+              // PERBAIKAN: Membungkus teks dengan TextRun agar bisa di-bold
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Tanggal", bold: true })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Nama Pemesan", bold: true })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Grand Total Pendapatan", bold: true })] })] }),
             ]
           }),
           ...rows
