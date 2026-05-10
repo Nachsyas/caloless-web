@@ -3,7 +3,7 @@
 import { useCartStore } from "@/store/useCartStore";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, Minus, Plus, Trash2, MapPin, Store, Truck, Map } from "lucide-react";
+import { ShoppingCart, Minus, Plus, Trash2, MapPin, Store, Truck, Map, Navigation } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import Image from "next/image";
@@ -48,50 +48,78 @@ export function CartDrawer() {
     setIsMounted(true);
   }, []);
 
-  // Fungsi untuk mengecek alamat ke API OpenStreetMap
-  const checkAddressAndCalculateFee = async () => {
+  // Fungsi untuk update state kalkulasi berdasarkan jarak
+  const applyShippingCalculation = (distance: number) => {
+    setDistanceKm(distance);
+    if (distance <= 2) {
+      setCalculatedShipping(0);
+      toast.success(`Jarak ${distance.toFixed(1)} km (Radius UIN). Bebas Ongkir!`);
+    } else {
+      const excessDistance = distance - 2;
+      const feeMultiplier = Math.ceil(excessDistance / 2);
+      const fee = feeMultiplier * 2000;
+      setCalculatedShipping(fee);
+      toast.success(`Jarak ${distance.toFixed(1)} km. Ongkir: Rp ${fee.toLocaleString("id-ID")}`);
+    }
+  };
+
+  // FUNGSI BARU: Ambil Koordinat Otomatis via GPS Browser
+  const getCurrentLocationGPS = () => {
+    if (!navigator.geolocation) {
+      toast.error("Browser HP/Laptop kamu tidak mendukung fitur GPS.");
+      return;
+    }
+
+    setIsCheckingLocation(true);
+    toast.info("Meminta izin akses lokasi GPS...");
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        const distance = calculateDistance(UIN_MALANG_COORDS.lat, UIN_MALANG_COORDS.lon, latitude, longitude);
+
+        applyShippingCalculation(distance);
+
+        // Isi otomatis text area alamat jika masih kosong
+        if (!address) {
+          setAddress("Alamat dari GPS: [Tulis patokan rumah/pagar di sini...]");
+        }
+        setIsCheckingLocation(false);
+      },
+      (error) => {
+        setIsCheckingLocation(false);
+        console.error(error);
+        toast.error("Gagal! Pastikan GPS HP menyala dan kamu mengizinkan akses lokasi untuk web ini.");
+      },
+      { enableHighAccuracy: true }
+    );
+  };
+
+  // Fungsi fallback: Cek manual via nama jalan (API OSM)
+  const checkAddressManual = async () => {
     if (!address || address.length < 5) {
-      toast.error("Alamat terlalu pendek. Masukkan alamat lengkap di Malang.");
+      toast.error("Ketik minimal nama jalan atau kecamatan.");
       return;
     }
 
     setIsCheckingLocation(true);
     try {
-      // Tambahkan keyword Malang agar pencarian lebih akurat
       const searchQuery = encodeURIComponent(`${address}, Malang`);
       const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}`);
       const data = await response.json();
 
       if (data && data.length > 0) {
-        // Ambil hasil pencarian pertama yang paling relevan
         const targetLat = parseFloat(data[0].lat);
         const targetLon = parseFloat(data[0].lon);
-
-        // Hitung jarak dengan Haversine
         const distance = calculateDistance(UIN_MALANG_COORDS.lat, UIN_MALANG_COORDS.lon, targetLat, targetLon);
-        setDistanceKm(distance);
-
-        // Logika Ongkos Kirim:
-        // Radius <= 2km = Gratis. Lebih dari itu = Rp 2000 tiap 2km
-        if (distance <= 2) {
-          setCalculatedShipping(0);
-          toast.success(`Jarak ${distance.toFixed(1)} km (Radius UIN). Bebas Ongkir!`);
-        } else {
-          // Contoh jarak 4.5km -> lebihnya 2.5km -> ceil(2.5/2) = 2 -> 2 * 2000 = 4000
-          const excessDistance = distance - 2;
-          const feeMultiplier = Math.ceil(excessDistance / 2);
-          const fee = feeMultiplier * 2000;
-          setCalculatedShipping(fee);
-          toast.success(`Jarak ${distance.toFixed(1)} km. Ongkir: Rp ${fee.toLocaleString("id-ID")}`);
-        }
+        applyShippingCalculation(distance);
       } else {
-        toast.error("Alamat tidak ditemukan di peta. Coba perjelas nama jalan/kecamatannya.");
+        toast.error("Jalan tidak terbaca. Saran: Gunakan tombol 'Lacak Lokasi Otomatis' di atas.");
         setDistanceKm(null);
         setCalculatedShipping(0);
       }
     } catch (error) {
-      console.error("Geocoding error:", error);
-      toast.error("Gagal mengecek lokasi. Coba lagi nanti.");
+      toast.error("Sistem peta sedang gangguan.");
     } finally {
       setIsCheckingLocation(false);
     }
@@ -108,7 +136,7 @@ export function CartDrawer() {
       return;
     }
     if (deliveryType === "delivery" && distanceKm === null) {
-      toast.error("Silakan cek lokasi alamatmu terlebih dahulu untuk menghitung ongkir.");
+      toast.error("Silakan cek/lacak lokasi alamatmu terlebih dahulu untuk menghitung ongkir.");
       return;
     }
 
@@ -125,7 +153,6 @@ export function CartDrawer() {
           customerDetails: {
             first_name: customerName,
             phone: customerPhone,
-            // Kita selipkan catatan pengiriman ke kolom alamat
             address: deliveryType === "pickup" ? "Ambil di Tempat (UIN Malang)" : `${address} (Jarak: ${distanceKm?.toFixed(1)}km)`
           }
         })
@@ -254,30 +281,45 @@ export function CartDrawer() {
                   {/* FORM ALAMAT (Jika Delivery) */}
                   {deliveryType === "delivery" && (
                     <div className="bg-secondary/20 p-3 rounded-xl border border-border mt-3 space-y-3">
-                      <p className="text-xs text-muted-foreground flex items-start gap-1">
-                        <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                        Radius &le; 2km UIN Malang = Gratis! Selebihnya Rp 2.000 / 2km.
-                      </p>
+
+                      {/* TOMBOL GPS SAKTI */}
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="w-full gap-2 shadow-sm"
+                        onClick={getCurrentLocationGPS}
+                        disabled={isCheckingLocation}
+                      >
+                        <Navigation className="w-4 h-4" />
+                        {isCheckingLocation ? "Memindai Satelit..." : "📍 Lacak Lokasi Saya Otomatis (GPS)"}
+                      </Button>
+
+                      <div className="relative">
+                        <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                        <div className="relative flex justify-center text-xs uppercase"><span className="bg-secondary/20 px-2 text-muted-foreground">atau tulis alamat detail</span></div>
+                      </div>
+
                       <textarea
-                        placeholder="Masukkan alamat lengkap (cth: Jl. Sigura-gura No. 10, Lowokwaru, Malang)"
+                        placeholder="Jln Simpang sunan Kalijaga 1 no 15 RT 02 RW 07..."
                         value={address}
                         onChange={(e) => setAddress(e.target.value)}
                         className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                       />
+
                       <Button
                         size="sm"
                         variant="secondary"
                         className="w-full gap-2 border-primary/20"
-                        onClick={checkAddressAndCalculateFee}
+                        onClick={checkAddressManual}
                         disabled={isCheckingLocation || !address}
                       >
                         <Map className="w-4 h-4" />
-                        {isCheckingLocation ? "Melacak Lokasi..." : "Cek Lokasi & Ongkir"}
+                        Cek Ongkir via Teks
                       </Button>
 
                       {distanceKm !== null && (
-                        <div className="bg-white dark:bg-zinc-900 border p-2 rounded-lg text-xs flex justify-between items-center shadow-sm">
-                          <span>Jarak ke UIN: <strong>{distanceKm.toFixed(1)} km</strong></span>
+                        <div className="bg-white dark:bg-zinc-900 border p-2 rounded-lg text-xs flex justify-between items-center shadow-sm mt-2">
+                          <span>Jarak: <strong>{distanceKm.toFixed(1)} km</strong></span>
                           <span className={calculatedShipping === 0 ? "text-green-600 font-bold" : "text-primary font-bold"}>
                             {calculatedShipping === 0 ? "GRATIS" : `+ Rp ${calculatedShipping.toLocaleString("id-ID")}`}
                           </span>
