@@ -30,7 +30,12 @@ export async function POST(request: Request) {
       .from("orders")
       .insert({
         user_name: customerDetails.first_name,
-        total_amount: total,
+        customer_phone: customerDetails.phone,
+        delivery_type: body.shippingFee > 0 || body.customerDetails.address.includes("Jarak") ? "delivery" : "pickup",
+        address: customerDetails.address,
+        subtotal_amount: total - shippingFee, // Total belanja saja
+        shipping_fee: shippingFee,
+        total_amount: total, // Grand total
         status: "pending",
         items_json: items,
       })
