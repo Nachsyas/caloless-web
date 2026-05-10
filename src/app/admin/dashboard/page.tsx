@@ -75,18 +75,30 @@ export default function AdminDashboard() {
     }
   };
 
+  // Perbaikan fungsi Update Harga
   const updateProductPrice = async (id: string, name: string, newPrice: number) => {
     const { error } = await supabase.from("products").update({ price: newPrice }).eq("id", id);
-    if (!error) {
+
+    if (error) {
+      toast.error("Gagal update harga: " + error.message);
+    } else {
+      // Langsung update state lokal agar angka di layar berubah seketika
+      setProducts(prev => prev.map(p => p.id === id ? { ...p, price: newPrice } : p));
       toast.success("Harga diupdate!");
       insertLog("UPDATE_MENU", `Ubah harga menu ${name} menjadi Rp ${newPrice.toLocaleString('id-ID')}`);
     }
   };
 
+  // Perbaikan fungsi Update Stok
   const updateProductStock = async (id: string, name: string, currentStock: number, change: number) => {
     const newStock = Math.max(0, currentStock + change);
     const { error } = await supabase.from("products").update({ stock: newStock }).eq("id", id);
-    if (!error) {
+
+    if (error) {
+      toast.error("Gagal update stok: " + error.message);
+    } else {
+      // Langsung update state lokal agar angka di layar berubah seketika
+      setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p));
       toast.success("Stok disesuaikan!");
       insertLog("UPDATE_STOK", `Ubah stok ${name} menjadi ${newStock} porsi`);
     }
