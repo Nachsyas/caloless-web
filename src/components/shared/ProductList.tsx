@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import { ProductCard, Product } from "./ProductCard";
+import { ProductCard } from "./ProductCard";
+import { Product } from "@/store/useCartStore";
 import { ScrollReveal } from "./ScrollReveal";
 
 // Mock data as fallback when Supabase is not configured
