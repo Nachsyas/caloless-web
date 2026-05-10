@@ -4,9 +4,16 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Clock, Package, MapPin, History, LayoutDashboard, Utensils, Users, BarChart3, Activity } from "lucide-react";
+import { CheckCircle2, Clock, Package, MapPin, History, LayoutDashboard, Utensils, Users, BarChart3, Activity, Download, FileText, FileSpreadsheet, File } from "lucide-react";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from "recharts";
+
+// Impor Library Export Dokumen
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel } from 'docx';
+import { saveAs } from 'file-saver';
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"orders" | "menu" | "team" | "analytics" | "logs">("orders");
@@ -21,7 +28,6 @@ export default function AdminDashboard() {
     fetchProducts();
     fetchLogs();
 
-    // Dengarkan 3 tabel sekaligus secara Real-time
     const channel = supabase.channel("admin-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => fetchOrders())
       .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs" }, () => fetchLogs())
@@ -46,7 +52,6 @@ export default function AdminDashboard() {
     if (data) setLogs(data);
   };
 
-  // Fungsi pencatat log aktivitas pembantu
   const insertLog = async (type: string, desc: string) => {
     await supabase.from("activity_logs").insert({ action_type: type, description: desc });
   };
@@ -68,14 +73,10 @@ export default function AdminDashboard() {
     }
   };
 
-  if (loading) return <div className="p-10 text-center flex flex-col items-center"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div><p className="mt-4">Memuat data server...</p></div>;
-
   const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid");
   const historyOrders = orders.filter(o => o.status === "success");
 
-  // --- LOGIKA PENGOLAHAN DATA ANALYTICS ---
-
-  // 1. Data Pendapatan Harian (Grafik Garis)
+  // --- LOGIKA ANALYTICS ---
   const rawDailyData: any = {};
   historyOrders.forEach(order => {
     const date = new Date(order.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
@@ -83,12 +84,10 @@ export default function AdminDashboard() {
   });
   const dailyRevenueData = Object.keys(rawDailyData).map(date => ({ date, Pendapatan: rawDailyData[date] }));
 
-  // 2. Data Item Terjual Khusus (Grafik Batang) - Logika Zensum * 3
   const rawItemData: any = {};
   historyOrders.forEach(order => {
     order.items_json.forEach((item: any) => {
       let qty = item.quantity;
-      // Peraturan Khusus: Zensum dihitung 3 pcs per 1 porsi
       if (item.name.toLowerCase().includes("zensum") || item.name.toLowerCase().includes("dimsum")) {
         qty = qty * 3;
       }
@@ -96,6 +95,109 @@ export default function AdminDashboard() {
     });
   });
   const itemSoldData = Object.keys(rawItemData).map(name => ({ name, Terjual: rawItemData[name] }));
+
+  // --- FUNGSI EXPORT LAPORAN ---
+
+  const exportExcel = () => {
+    try {
+      const dataToExport = historyOrders.map(o => ({
+        "Waktu Transaksi": new Date(o.created_at).toLocaleString("id-ID"),
+        "Nama Pemesan": o.user_name,
+        "No. WhatsApp": o.customer_phone,
+        "Jenis Pesanan": o.delivery_type.toUpperCase(),
+        "Rincian Menu": o.items_json.map((i: any) => `${i.quantity}x ${i.name}`).join(", "),
+        "Subtotal (Belanja)": o.subtotal_amount,
+        "Biaya Ongkir": o.shipping_fee,
+        "Grand Total": o.total_amount
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Laporan Penjualan F&B");
+      XLSX.writeFile(workbook, "Laporan_Keuangan_CALOLESS.xlsx");
+
+      insertLog("EXPORT_REPORT", "Mengunduh Laporan Keuangan (Format Excel)");
+      toast.success("File Excel berhasil diunduh!");
+    } catch (error) {
+      toast.error("Gagal membuat file Excel.");
+    }
+  };
+
+  const exportPDF = () => {
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text("Laporan Keuangan Restoran CALOLESS", 14, 20);
+      doc.setFontSize(11);
+      doc.text(`Dicetak pada: ${new Date().toLocaleString('id-ID')}`, 14, 28);
+
+      const tableData = historyOrders.map(o => [
+        new Date(o.created_at).toLocaleDateString("id-ID"),
+        o.user_name,
+        o.items_json.map((i: any) => `${i.quantity}x ${i.name}`).join("\n"),
+        `Rp ${o.total_amount.toLocaleString('id-ID')}`
+      ]);
+
+      autoTable(doc, {
+        startY: 35,
+        head: [['Tanggal', 'Pemesan', 'Item Dibeli', 'Grand Total']],
+        body: tableData,
+        theme: 'grid',
+        headStyles: { fillColor: [139, 92, 246] } // Warna ungu primary CALOLESS
+      });
+
+      doc.save("Laporan_Keuangan_CALOLESS.pdf");
+      insertLog("EXPORT_REPORT", "Mengunduh Laporan Keuangan (Format PDF)");
+      toast.success("File PDF berhasil diunduh!");
+    } catch (error) {
+      toast.error("Gagal membuat file PDF.");
+    }
+  };
+
+  const exportWord = async () => {
+    try {
+      const rows = historyOrders.map(o => new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph(new Date(o.created_at).toLocaleDateString("id-ID"))] }),
+          new TableCell({ children: [new Paragraph(o.user_name)] }),
+          new TableCell({ children: [new Paragraph(`Rp ${o.total_amount.toLocaleString("id-ID")}`)] }),
+        ]
+      }));
+
+      const table = new Table({
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({ children: [new Paragraph({ text: "Tanggal", bold: true })] }),
+              new TableCell({ children: [new Paragraph({ text: "Nama Pemesan", bold: true })] }),
+              new TableCell({ children: [new Paragraph({ text: "Grand Total Pendapatan", bold: true })] }),
+            ]
+          }),
+          ...rows
+        ]
+      });
+
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: [
+            new Paragraph({ text: "Laporan Pendapatan CALOLESS", heading: HeadingLevel.HEADING_1 }),
+            new Paragraph({ text: `Dihasilkan pada sistem: ${new Date().toLocaleString('id-ID')}`, spacing: { after: 400 } }),
+            table
+          ]
+        }]
+      });
+
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, "Laporan_Keuangan_CALOLESS.docx");
+      insertLog("EXPORT_REPORT", "Mengunduh Laporan Keuangan (Format Word)");
+      toast.success("File Word berhasil diunduh!");
+    } catch (error) {
+      toast.error("Gagal membuat file Word.");
+    }
+  };
+
+  if (loading) return <div className="p-10 text-center flex flex-col items-center"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div><p className="mt-4">Memuat data server...</p></div>;
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
@@ -114,7 +216,7 @@ export default function AdminDashboard() {
       </div>
 
       <div className="p-6 max-w-7xl mx-auto">
-        {/* TAB 1: PESANAN */}
+        {/* ... TAB 1: PESANAN TETAP SAMA ... */}
         {activeTab === "orders" && (
           <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Tabel Pesanan Aktif */}
@@ -193,7 +295,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 2: MANAJEMEN MENU */}
+        {/* ... TAB 2: MENU TETAP SAMA ... */}
         {activeTab === "menu" && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex justify-between items-center">
@@ -215,13 +317,28 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 3: ANALYTICS (Poin 6) */}
+        {/* TAB 3: ANALYTICS DENGAN TOMBOL EXPORT */}
         {activeTab === "analytics" && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <h2 className="text-2xl font-bold mb-6">Analisa Performa Penjualan</h2>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <h2 className="text-2xl font-bold">Analisa Performa Penjualan</h2>
+
+              {/* TOMBOL-TOMBOL AJAIB EXPORT LAPORAN */}
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={exportPDF} variant="outline" className="gap-2 border-red-200 text-red-600 hover:bg-red-50">
+                  <FileText className="w-4 h-4" /> Export PDF
+                </Button>
+                <Button onClick={exportExcel} variant="outline" className="gap-2 border-green-200 text-green-600 hover:bg-green-50">
+                  <FileSpreadsheet className="w-4 h-4" /> Export Excel
+                </Button>
+                <Button onClick={exportWord} variant="outline" className="gap-2 border-blue-200 text-blue-600 hover:bg-blue-50">
+                  <File className="w-4 h-4" /> Export Word
+                </Button>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Grafik 1: Pendapatan Harian */}
+              {/* Grafik 1: Pendapatan */}
               <div className="bg-white dark:bg-zinc-900 border rounded-2xl p-6 shadow-sm">
                 <h3 className="font-bold mb-6 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-primary" /> Tren Pendapatan Harian</h3>
                 <div className="h-72 w-full">
@@ -256,14 +373,10 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </div>
-
-            <div className="flex justify-end pt-4">
-              <Button disabled className="gap-2"><Activity className="w-4 h-4" /> Fitur Export Laporan (PDF/Excel) sedang dibangun...</Button>
-            </div>
           </div>
         )}
 
-        {/* TAB 4: ACTIVITY LOGS (Poin 6) */}
+        {/* ... TAB 4: LOGS TETAP SAMA ... */}
         {activeTab === "logs" && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex items-center justify-between">
@@ -286,7 +399,6 @@ export default function AdminDashboard() {
                   </thead>
                   <tbody className="divide-y">
                     {logs.map((log) => {
-                      // Formatting waktu super detail sesuai permintaan
                       const dateObj = new Date(log.created_at);
                       const fullTime = dateObj.toLocaleDateString('id-ID', {
                         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
@@ -298,7 +410,7 @@ export default function AdminDashboard() {
                         <tr key={log.id} className="hover:bg-zinc-50/50 transition-colors">
                           <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-muted-foreground">{fullTime}</td>
                           <td className="px-6 py-4">
-                            <Badge variant={log.action_type === "PESANAN_SELESAI" ? "default" : "secondary"} className="text-[10px]">
+                            <Badge variant={log.action_type === "PESANAN_SELESAI" ? "default" : log.action_type.includes("EXPORT") ? "outline" : "secondary"} className="text-[10px]">
                               {log.action_type}
                             </Badge>
                           </td>
@@ -319,7 +431,7 @@ export default function AdminDashboard() {
           <div className="text-center py-20 text-muted-foreground animate-in fade-in">
             <Users className="w-16 h-16 mx-auto mb-4 opacity-20" />
             <h2 className="text-xl font-bold mb-2">Manajemen Anggota Tim</h2>
-            <p>Akan segera diselesaikan.</p>
+            <p>Fitur CRUD Anggota dan Manajemen Stok akan kita kerjakan di Sprint 7.</p>
           </div>
         )}
 
