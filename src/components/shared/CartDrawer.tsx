@@ -92,7 +92,7 @@ export function CartDrawer() {
 
   return (
     <>
-      <Script src="https://app.sandbox.midtrans.com/snap/snap.js" data-client-key={process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY} strategy="lazyOnload" />
+      <Script src="https://app.midtrans.com/snap/snap.js" data-client-key={process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY} strategy="lazyOnload" />
       <Sheet>
         <SheetTrigger render={<Button variant="ghost" size="icon" className="relative cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full w-10 h-10 transition-colors" />}>
           <ShoppingCart className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />

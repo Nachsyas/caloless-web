@@ -15,11 +15,12 @@ export async function POST(request: Request) {
 
     // Check if env vars are present, if not, throw an error to be handled by frontend
     if (!process.env.MIDTRANS_SERVER_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-       return NextResponse.json({ error: "API Keys belum dikonfigurasi di .env.local" }, { status: 500 });
+      return NextResponse.json({ error: "API Keys belum dikonfigurasi di .env.local" }, { status: 500 });
     }
 
     const snap = new midtransClient.Snap({
-      isProduction: false,
+      // UBAH KE TRUE UNTUK PRODUCTION (UANG ASLI)
+      isProduction: true,
       serverKey: process.env.MIDTRANS_SERVER_KEY || "",
       clientKey: process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || "",
     });
@@ -78,16 +79,16 @@ export async function POST(request: Request) {
     };
 
     const transaction = await snap.createTransaction(parameters);
-    
+
     // 4. Update order with Snap Token
     await supabase
       .from("orders")
       .update({ snap_token: transaction.token })
       .eq("id", order.id);
 
-    return NextResponse.json({ 
-      token: transaction.token, 
-      redirect_url: transaction.redirect_url 
+    return NextResponse.json({
+      token: transaction.token,
+      redirect_url: transaction.redirect_url
     });
   } catch (error: any) {
     console.error("Checkout Error:", error);
