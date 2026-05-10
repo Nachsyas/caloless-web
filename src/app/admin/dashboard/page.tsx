@@ -67,12 +67,30 @@ export default function AdminDashboard() {
     await supabase.from("activity_logs").insert({ action_type: type, description: desc });
   };
 
-  const handleCompleteOrder = async (orderId: string, userName: string) => {
-    const { error } = await supabase.from("orders").update({ status: "success" }).eq("id", orderId);
-    if (!error) {
-      toast.success("Pesanan dipindahkan ke Riwayat.");
-      insertLog("PESANAN_SELESAI", `Menyelesaikan pesanan atas nama: ${userName}`);
+  const handleCompleteOrder = async (orderId: string, userName: string, itemsJson: any[]) => {
+    // 1. Update status pesanan di database
+    const { error: orderError } = await supabase.from("orders").update({ status: "success" }).eq("id", orderId);
+
+    if (orderError) return toast.error("Gagal menyelesaikan pesanan.");
+
+    // 2. LOGIKA AUTO-DECREMENT: Kurangi stok produk berdasarkan item yang dibeli
+    for (const item of itemsJson) {
+      // Ambil stok saat ini dulu
+      const { data: currentProduct } = await supabase
+        .from("products")
+        .select("stock, name")
+        .eq("id", item.id)
+        .single();
+
+      if (currentProduct) {
+        const newStock = Math.max(0, (currentProduct.stock || 0) - item.quantity);
+        await supabase.from("products").update({ stock: newStock }).eq("id", item.id);
+      }
     }
+
+    toast.success("Pesanan selesai & stok otomatis berkurang!");
+    insertLog("PESANAN_SELESAI", `Menyelesaikan pesanan ${userName}. Stok produk telah diperbarui otomatis.`);
+    fetchProducts(); // Refresh data produk di layar admin
   };
 
   // Perbaikan fungsi Update Harga
@@ -233,7 +251,7 @@ export default function AdminDashboard() {
                     </div>
                     <div className="flex flex-col items-end gap-4">
                       <p className="text-xl font-black text-primary">Rp {o.total_amount?.toLocaleString("id-ID")}</p>
-                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name)} className="bg-green-600 hover:bg-green-700 text-white gap-2"><CheckCircle2 className="w-4 h-4" /> Pesanan Selesai</Button>
+                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="bg-green-600 hover:bg-green-700 text-white gap-2"><CheckCircle2 className="w-4 h-4" /> Pesanan Selesai</Button>
                     </div>
                   </div>
                 ))}
