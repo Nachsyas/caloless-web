@@ -8,15 +8,13 @@ import {
   CheckCircle2, Clock, Package, MapPin, History,
   LayoutDashboard, Utensils, Users, BarChart3,
   Activity, FileText, FileSpreadsheet, File,
-  Trash2, Plus, UploadCloud, Edit3, X
+  Trash2, Plus, UploadCloud, Edit3, X, Database, Image as ImageIcon
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, LineChart, Line, CartesianGrid
 } from "recharts";
-
-// Library Export Dokumen
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -26,218 +24,246 @@ import Image from "next/image";
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"orders" | "menu" | "team" | "analytics" | "logs">("orders");
+  const [menuSubTab, setMenuSubTab] = useState<"catalog" | "ingredients">("catalog");
+
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [ingredients, setIngredients] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [team, setTeam] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // State Form Anggota & Mode Edit
+  // Form State: TIM
   const [newMember, setNewMember] = useState({ name: "", role: "", photo_url: "", order_priority: 5 });
-  const [isEditing, setIsEditing] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isEditingTeam, setIsEditingTeam] = useState(false);
+  const [editTeamId, setEditTeamId] = useState<string | null>(null);
+  const [isUploadingTeam, setIsUploadingTeam] = useState(false);
+
+  // Form State: MENU
+  const [newProduct, setNewProduct] = useState({
+    name: "", price: 0, stock: 100, description: "",
+    portion_size: "", ingredients_text: "", calories: 0, image_url: ""
+  });
+  const [isEditingProduct, setIsEditingProduct] = useState(false);
+  const [editProductId, setEditProductId] = useState<string | null>(null);
+  const [isUploadingProduct, setIsUploadingProduct] = useState(false);
+
+  // Form State: GUDANG BAHAN BAKU
+  const [newIng, setNewIng] = useState({ name: "", unit: "", stock_quantity: 0 });
 
   const supabase = createClient();
 
   useEffect(() => {
-    fetchOrders();
-    fetchProducts();
-    fetchLogs();
-    fetchTeam();
-
+    fetchData();
     const channel = supabase.channel("admin-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => fetchOrders())
-      .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs" }, () => fetchLogs())
-      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, () => fetchTeam())
-      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => fetchProducts())
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "ingredients" }, () => fetchData())
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const fetchOrders = async () => {
-    const { data } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
-    if (data) setOrders(data);
+  const fetchData = async () => {
+    const { data: o } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
+    const { data: p } = await supabase.from("products").select("*, product_ingredients(*, ingredients(*))").order("id", { ascending: true });
+    const { data: i } = await supabase.from("ingredients").select("*").order("name", { ascending: true });
+    const { data: t } = await supabase.from("team_members").select("*").order("order_priority", { ascending: true });
+    const { data: l } = await supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(50);
+
+    if (o) setOrders(o);
+    if (p) setProducts(p);
+    if (i) setIngredients(i);
+    if (t) setTeam(t);
+    if (l) setLogs(l);
     setLoading(false);
-  };
-
-  const fetchProducts = async () => {
-    const { data } = await supabase.from("products").select("*").order("id", { ascending: true });
-    if (data) setProducts(data);
-  };
-
-  const fetchLogs = async () => {
-    const { data } = await supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(50);
-    if (data) setLogs(data);
-  };
-
-  const fetchTeam = async () => {
-    const { data } = await supabase.from("team_members").select("*").order("order_priority", { ascending: true });
-    if (data) setTeam(data);
   };
 
   const insertLog = async (type: string, desc: string) => {
     await supabase.from("activity_logs").insert({ action_type: type, description: desc });
   };
 
-  // --- LOGIKA MANAJEMEN PESANAN & STOK ---
-  const handleCompleteOrder = async (orderId: string, userName: string, itemsJson: any[]) => {
-    const { error: orderError } = await supabase.from("orders").update({ status: "success" }).eq("id", orderId);
-    if (orderError) return toast.error("Gagal menyelesaikan pesanan.");
+  // --- CRUD PESANAN & AUTO DECREMENT INVENTORY ---
+  const handleCompleteOrder = async (orderId: string, userName: string, items: any[]) => {
+    const { error } = await supabase.from("orders").update({ status: "success" }).eq("id", orderId);
+    if (error) return toast.error("Gagal menyelesaikan pesanan.");
 
-    for (const item of itemsJson) {
-      const { data: currentProduct } = await supabase.from("products").select("stock").eq("id", item.id).single();
-      if (currentProduct) {
-        const newStock = Math.max(0, (currentProduct.stock || 0) - item.quantity);
-        await supabase.from("products").update({ stock: newStock }).eq("id", item.id);
+    for (const item of items) {
+      // 1. Kurangi Porsi Produk
+      const { data: p } = await supabase.from("products").select("stock").eq("id", item.id).single();
+      if (p) {
+        await supabase.from("products").update({ stock: Math.max(0, p.stock - item.quantity) }).eq("id", item.id);
+      }
+
+      // 2. Kurangi Stok Bahan Baku di Gudang berdasarkan Resep
+      const { data: recipe } = await supabase.from("product_ingredients").select("*").eq("product_id", item.id);
+      if (recipe) {
+        for (const ing of recipe) {
+          const { data: inv } = await supabase.from("ingredients").select("stock_quantity").eq("id", ing.ingredient_id).single();
+          if (inv) {
+            const totalUsed = ing.amount_needed * item.quantity;
+            await supabase.from("ingredients").update({
+              stock_quantity: Math.max(0, inv.stock_quantity - totalUsed)
+            }).eq("id", ing.ingredient_id);
+          }
+        }
       }
     }
-
-    toast.success("Pesanan selesai!");
+    toast.success("Pesanan Selesai! Stok menu & bahan baku otomatis berkurang.");
     insertLog("PESANAN_SELESAI", `Pesanan ${userName} selesai.`);
   };
 
-  const updateProductPrice = async (id: string, name: string, newPrice: number) => {
-    const { error } = await supabase.from("products").update({ price: newPrice }).eq("id", id);
-    if (!error) {
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, price: newPrice } : p));
-      toast.success("Harga diupdate!");
-      insertLog("UPDATE_MENU", `Ubah harga ${name} jadi Rp ${newPrice.toLocaleString()}`);
-    }
-  };
-
-  const updateProductStock = async (id: string, name: string, currentStock: number, change: number) => {
-    const newStock = Math.max(0, currentStock + change);
-    const { error } = await supabase.from("products").update({ stock: newStock }).eq("id", id);
-    if (!error) {
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p));
-      toast.success("Stok disesuaikan!");
-      insertLog("UPDATE_STOK", `Ubah stok ${name} jadi ${newStock}`);
-    }
-  };
-
-  // --- LOGIKA MANAJEMEN TIM (CRUD LENGKAP) ---
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsUploading(true);
-    const toastId = toast.loading("Mengunggah foto...");
+  // --- CRUD MENU ---
+  const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setIsUploadingProduct(true); const toastId = toast.loading("Mengunggah foto menu...");
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
-      const filePath = `profiles/${fileName}`;
-      const { error: uploadError } = await supabase.storage.from('team-photos').upload(filePath, file);
-      if (uploadError) throw uploadError;
-      const { data: publicUrlData } = supabase.storage.from('team-photos').getPublicUrl(filePath);
-      setNewMember({ ...newMember, photo_url: publicUrlData.publicUrl });
-      toast.success("Foto siap!", { id: toastId });
-    } catch (error: any) {
-      toast.error("Gagal upload: " + error.message, { id: toastId });
-    } finally {
-      setIsUploading(false);
-    }
+      const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
+      const { error } = await supabase.storage.from('product-photos').upload(`menus/${fileName}`, file);
+      if (error) throw error;
+      const { data } = supabase.storage.from('product-photos').getPublicUrl(`menus/${fileName}`);
+      setNewProduct({ ...newProduct, image_url: data.publicUrl });
+      toast.success("Foto menu siap!", { id: toastId });
+    } catch (err: any) { toast.error("Gagal upload: " + err.message, { id: toastId }); }
+    finally { setIsUploadingProduct(false); }
   };
 
-  const handleSaveMember = async () => {
-    if (!newMember.name || !newMember.role) return toast.error("Nama & Role wajib diisi!");
-
-    if (isEditing && editId) {
-      const { error } = await supabase.from("team_members").update(newMember).eq("id", editId);
+  const handleSaveProduct = async () => {
+    if (!newProduct.name || newProduct.price <= 0) return toast.error("Nama & Harga valid wajib diisi!");
+    if (isEditingProduct && editProductId) {
+      const { error } = await supabase.from("products").update(newProduct).eq("id", editProductId);
       if (!error) {
-        toast.success("Identitas anggota berhasil diperbarui!");
-        insertLog("UPDATE_ANGGOTA", `Update data anggota: ${newMember.name}`);
-        resetForm();
-      } else {
-        toast.error("Gagal update data.");
+        toast.success("Menu diperbarui!");
+        insertLog("UPDATE_MENU", `Update detail menu: ${newProduct.name}`);
+        resetProductForm();
       }
     } else {
-      const { error } = await supabase.from("team_members").insert([newMember]);
+      const { error } = await supabase.from("products").insert([newProduct]);
       if (!error) {
-        toast.success("Anggota baru ditambahkan!");
-        insertLog("TAMBAH_ANGGOTA", `Tambah anggota: ${newMember.name}`);
-        resetForm();
+        toast.success("Menu ditambahkan!");
+        insertLog("TAMBAH_MENU", `Tambah menu: ${newProduct.name}`);
+        resetProductForm();
       }
     }
   };
 
-  const resetForm = () => {
-    setNewMember({ name: "", role: "", photo_url: "", order_priority: 5 });
-    setIsEditing(false);
-    setEditId(null);
+  const resetProductForm = () => {
+    setNewProduct({ name: "", price: 0, stock: 100, description: "", portion_size: "", ingredients_text: "", calories: 0, image_url: "" });
+    setIsEditingProduct(false); setEditProductId(null);
   };
 
-  const startEdit = (member: any) => {
-    setNewMember({
-      name: member.name,
-      role: member.role,
-      photo_url: member.photo_url || "",
-      order_priority: member.order_priority || 5
+  const startEditProduct = (p: any) => {
+    setNewProduct({
+      name: p.name, price: p.price, stock: p.stock ?? 0, description: p.description || "",
+      portion_size: p.portion_size || "", ingredients_text: p.ingredients_text || "",
+      calories: p.calories || 0, image_url: p.image_url || ""
     });
-    setEditId(member.id);
-    setIsEditing(true);
+    setEditProductId(p.id); setIsEditingProduct(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDeleteMember = async (id: string, name: string) => {
-    const { error } = await supabase.from("team_members").delete().eq("id", id);
+  const handleDeleteProduct = async (id: string, name: string) => {
+    if (!confirm(`Hapus menu ${name}?`)) return;
+    const { error } = await supabase.from("products").delete().eq("id", id);
+    if (!error) { toast.success("Menu dihapus."); insertLog("HAPUS_MENU", `Hapus menu: ${name}`); }
+  };
+
+  const updateProductStockOnly = async (id: string, name: string, curr: number, change: number) => {
+    const newStock = Math.max(0, curr + change);
+    const { error } = await supabase.from("products").update({ stock: newStock }).eq("id", id);
     if (!error) {
-      toast.success("Anggota dihapus.");
-      insertLog("HAPUS_ANGGOTA", `Hapus anggota: ${name}`);
+      setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p));
+      insertLog("UPDATE_STOK", `Stok ${name} jadi ${newStock}`);
     }
   };
 
-  // --- EXPORT & ANALYTICS ---
+  // --- CRUD GUDANG BAHAN BAKU ---
+  const handleAddIngredient = async () => {
+    if (!newIng.name || !newIng.unit) return toast.error("Nama & Satuan wajib diisi!");
+    const { error } = await supabase.from("ingredients").insert([newIng]);
+    if (!error) {
+      toast.success("Bahan baku ditambahkan!");
+      insertLog("TAMBAH_BAHAN", `Tambah bahan baku: ${newIng.name}`);
+      setNewIng({ name: "", unit: "", stock_quantity: 0 });
+    }
+  };
+
+  const updateIngStock = async (id: string, curr: number, change: number) => {
+    const newStock = Math.max(0, curr + change);
+    await supabase.from("ingredients").update({ stock_quantity: newStock }).eq("id", id);
+  };
+
+  // --- CRUD TIM ---
+  const handleTeamImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setIsUploadingTeam(true); const toastId = toast.loading("Mengunggah foto...");
+    try {
+      const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
+      await supabase.storage.from('team-photos').upload(`profiles/${fileName}`, file);
+      const { data } = supabase.storage.from('team-photos').getPublicUrl(`profiles/${fileName}`);
+      setNewMember({ ...newMember, photo_url: data.publicUrl });
+      toast.success("Foto siap!", { id: toastId });
+    } catch (err: any) { toast.error("Gagal upload."); } finally { setIsUploadingTeam(false); }
+  };
+
+  const handleSaveTeam = async () => {
+    if (!newMember.name || !newMember.role) return toast.error("Nama & Role wajib!");
+    if (isEditingTeam && editTeamId) {
+      const { error } = await supabase.from("team_members").update(newMember).eq("id", editTeamId);
+      if (!error) { toast.success("Anggota diperbarui!"); resetTeamForm(); }
+    } else {
+      const { error } = await supabase.from("team_members").insert([newMember]);
+      if (!error) { toast.success("Anggota ditambahkan!"); resetTeamForm(); }
+    }
+  };
+
+  const resetTeamForm = () => { setNewMember({ name: "", role: "", photo_url: "", order_priority: 5 }); setIsEditingTeam(false); setEditTeamId(null); };
+  const startEditTeam = (m: any) => { setNewMember({ name: m.name, role: m.role, photo_url: m.photo_url || "", order_priority: m.order_priority || 5 }); setEditTeamId(m.id); setIsEditingTeam(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const handleDeleteTeam = async (id: string, name: string) => { await supabase.from("team_members").delete().eq("id", id); toast.success("Dihapus."); };
+
+  // --- ANALYTICS & EXPORT ---
   const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid");
   const historyOrders = orders.filter(o => o.status === "success");
 
-  const dailyRevenueData = Object.entries(
-    historyOrders.reduce((acc: any, o) => {
-      const date = new Date(o.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
-      acc[date] = (acc[date] || 0) + o.total_amount;
-      return acc;
-    }, {})
-  ).map(([date, Pendapatan]) => ({ date, Pendapatan }));
+  const dailyRevenueData = Object.entries(historyOrders.reduce((acc: any, o) => {
+    const date = new Date(o.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+    acc[date] = (acc[date] || 0) + o.total_amount; return acc;
+  }, {})).map(([date, Pendapatan]) => ({ date, Pendapatan }));
 
-  const itemSoldData = Object.entries(
-    historyOrders.reduce((acc: any, order) => {
-      order.items_json?.forEach((item: any) => {
-        let qty = item.quantity;
-        if (item.name.toLowerCase().includes("zensum")) qty *= 3;
-        acc[item.name] = (acc[item.name] || 0) + qty;
-      });
-      return acc;
-    }, {})
-  ).map(([name, Terjual]) => ({ name, Terjual }));
+  const itemSoldData = Object.entries(historyOrders.reduce((acc: any, order) => {
+    order.items_json?.forEach((i: any) => {
+      let qty = i.quantity; if (i.name.toLowerCase().includes("zensum")) qty *= 3;
+      acc[i.name] = (acc[i.name] || 0) + qty;
+    });
+    return acc;
+  }, {})).map(([name, Terjual]) => ({ name, Terjual }));
 
   const exportExcel = () => {
     try {
+      if (historyOrders.length === 0) return toast.error("Tidak ada data Riwayat untuk diexport!");
       const data = historyOrders.map(o => ({
-        "Waktu": o.created_at ? new Date(o.created_at).toLocaleString("id-ID") : "-",
+        "Waktu Transaksi": o.created_at ? new Date(o.created_at).toLocaleString("id-ID") : "-",
         "Pemesan": o.user_name || "-",
         "WhatsApp": o.customer_phone || "-",
-        "Tipe": o.delivery_type ? o.delivery_type.toUpperCase() : "-",
-        "Total": o.total_amount || 0
+        "Tipe Pengiriman": o.delivery_type ? o.delivery_type.toUpperCase() : "-",
+        "Detail Order": o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join(", ") || "-",
+        "Total (Rp)": o.total_amount || 0
       }));
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Laporan");
-      XLSX.writeFile(wb, "Laporan_Caloless.xlsx");
-      insertLog("EXPORT_REPORT", "Mengunduh Laporan Keuangan (Excel)");
-    } catch (e) { toast.error("Gagal Excel"); }
+      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Laporan Penjualan"); XLSX.writeFile(wb, "Laporan_Caloless.xlsx");
+      toast.success("Excel berhasil diunduh"); insertLog("EXPORT_REPORT", "Export Excel Laporan Keuangan");
+    } catch (e: any) { toast.error("Gagal Excel: " + e.message); }
   };
 
   const exportPDF = () => {
     try {
-      const doc = new jsPDF();
-      doc.setFontSize(18); doc.text("Laporan Keuangan CALOLESS", 14, 20);
+      const doc = new jsPDF(); doc.setFontSize(18); doc.text("Laporan Keuangan", 14, 20);
       autoTable(doc, {
-        startY: 30,
-        head: [['Tanggal', 'Pemesan', 'Total']],
-        body: historyOrders.map(o => [new Date(o.created_at).toLocaleDateString("id-ID"), o.user_name, `Rp ${o.total_amount}`]),
+        startY: 30, head: [['Tanggal', 'Pemesan', 'Item', 'Total']],
+        body: historyOrders.map(o => [new Date(o.created_at).toLocaleDateString("id-ID"), o.user_name, o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join("\n"), `Rp ${o.total_amount}`])
       });
-      doc.save("Laporan_CALOLESS.pdf");
-      insertLog("EXPORT_REPORT", "Unduh Laporan (PDF)");
+      doc.save("Laporan_CALOLESS.pdf"); toast.success("PDF diunduh");
     } catch (e) { }
   };
 
@@ -258,26 +284,25 @@ export default function AdminDashboard() {
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Pemesan", bold: true })] })] }),
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Total", bold: true })] })] })
             ]
-          }), ...rows
-        ]
+          }), ...rows]
       });
       const doc = new Document({ sections: [{ children: [new Paragraph({ text: "Laporan CALOLESS", heading: HeadingLevel.HEADING_1 }), table] }] });
-      const blob = await Packer.toBlob(doc); saveAs(blob, "Laporan_CALOLESS.docx");
-      insertLog("EXPORT_REPORT", "Unduh Laporan (Word)");
+      const blob = await Packer.toBlob(doc); saveAs(blob, "Laporan_CALOLESS.docx"); toast.success("Word diunduh");
     } catch (e) { }
   };
 
-  if (loading) return <div className="p-10 text-center font-bold">Sinkronisasi Data...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-primary">Menyinkronkan Server...</div>;
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      {/* NAVIGASI ADMIN */}
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 pb-20">
+
+      {/* TOPBAR NAVIGATION */}
       <div className="bg-white dark:bg-zinc-900 border-b p-4 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between items-center gap-4">
           <h1 className="text-2xl font-extrabold tracking-tight text-primary">CALOLESS <span className="text-zinc-500 font-medium">| Admin Center</span></h1>
           <div className="flex flex-wrap justify-center gap-2 bg-zinc-100 dark:bg-zinc-800 p-1.5 rounded-xl">
             <button onClick={() => setActiveTab("orders")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "orders" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><LayoutDashboard className="w-4 h-4" /> Pesanan</button>
-            <button onClick={() => setActiveTab("menu")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "menu" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><Utensils className="w-4 h-4" /> Menu & Stok</button>
+            <button onClick={() => setActiveTab("menu")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "menu" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><Utensils className="w-4 h-4" /> Menu & Gudang</button>
             <button onClick={() => setActiveTab("analytics")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "analytics" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><BarChart3 className="w-4 h-4" /> Analytics</button>
             <button onClick={() => setActiveTab("logs")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "logs" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><Activity className="w-4 h-4" /> Logs</button>
             <button onClick={() => setActiveTab("team")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "team" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><Users className="w-4 h-4" /> Tim</button>
@@ -287,32 +312,23 @@ export default function AdminDashboard() {
 
       <div className="p-6 max-w-7xl mx-auto">
 
-        {/* TAB 1: PESANAN */}
+        {/* ================= TAB 1: PESANAN ================= */}
         {activeTab === "orders" && (
           <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4">
-            {/* PESANAN AKTIF */}
             <section className="space-y-4">
-              <div className="flex items-center gap-2 text-orange-600 font-bold">
-                <Clock className="w-5 h-5" /><h2>Pesanan Aktif ({activeOrders.length})</h2>
-              </div>
+              <div className="flex items-center gap-2 text-orange-600 font-bold"><Clock className="w-5 h-5" /><h2>Pesanan Aktif ({activeOrders.length})</h2></div>
               <div className="grid gap-4">
                 {activeOrders.map((o) => (
-                  <div key={o.id} className="bg-white dark:bg-zinc-900 border rounded-2xl p-5 shadow-sm flex flex-col md:flex-row justify-between gap-6">
+                  <div key={o.id} className="bg-white border rounded-2xl p-5 shadow-sm flex flex-col md:flex-row justify-between gap-6">
                     <div className="space-y-2">
-                      <div className="flex gap-2"><Badge variant={o.status === "paid" ? "default" : "outline"}>{o.status}</Badge></div>
+                      <Badge variant={o.status === "paid" ? "default" : "outline"}>{o.status}</Badge>
                       <h3 className="font-bold text-lg">{o.user_name} <span className="text-sm font-normal text-muted-foreground">({o.customer_phone})</span></h3>
-                      <div className="text-sm space-y-1">
-                        {o.items_json?.map((i: any, idx: number) => (
-                          <p key={idx} className="flex gap-2"><Package className="w-4 h-4 text-primary" /> {i.quantity}x {i.name}</p>
-                        ))}
-                      </div>
-                      <p className="text-xs text-muted-foreground flex gap-1"><MapPin className="w-3 h-3" /> {o.address}</p>
+                      <div className="text-sm space-y-1">{o.items_json?.map((i: any, idx: number) => (<p key={idx} className="flex gap-2"><Package className="w-4 h-4 text-primary" /> {i.quantity}x {i.name}</p>))}</div>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3 shrink-0" /> {o.address}</p>
                     </div>
                     <div className="flex flex-col items-end justify-between gap-4">
                       <p className="text-xl font-black text-primary">Rp {o.total_amount?.toLocaleString("id-ID")}</p>
-                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="bg-green-600 hover:bg-green-700 text-white gap-2 rounded-full">
-                        <CheckCircle2 className="w-4 h-4" /> Pesanan Selesai
-                      </Button>
+                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="bg-green-600 hover:bg-green-700 text-white gap-2 rounded-full"><CheckCircle2 className="w-4 h-4" /> Pesanan Selesai</Button>
                     </div>
                   </div>
                 ))}
@@ -320,24 +336,15 @@ export default function AdminDashboard() {
               </div>
             </section>
 
-            {/* RIWAYAT PESANAN */}
             <section className="space-y-4 pt-4 border-t">
-              <div className="flex items-center gap-2 text-zinc-500 font-bold">
-                <History className="w-5 h-5" /><h2>Riwayat Pembelian</h2>
-              </div>
+              <div className="flex items-center gap-2 text-zinc-500 font-bold"><History className="w-5 h-5" /><h2>Riwayat Pembelian</h2></div>
               <div className="overflow-x-auto border rounded-2xl bg-white">
                 <table className="w-full text-sm text-left">
-                  <thead className="bg-zinc-50 border-b">
-                    <tr>
-                      <th className="px-6 py-4">Pemesan</th>
-                      <th className="px-6 py-4">Item & Qty</th>
-                      <th className="px-6 py-4 text-right">Total Pendapatan</th>
-                    </tr>
-                  </thead>
+                  <thead className="bg-zinc-50 border-b"><tr><th className="px-6 py-4">Pemesan</th><th className="px-6 py-4">Item & Qty</th><th className="px-6 py-4 text-right">Total Pendapatan</th></tr></thead>
                   <tbody className="divide-y">
                     {historyOrders.map((o) => (
-                      <tr key={o.id}>
-                        <td className="px-6 py-4">{o.user_name}</td>
+                      <tr key={o.id} className="hover:bg-zinc-50">
+                        <td className="px-6 py-4 font-medium">{o.user_name}</td>
                         <td className="px-6 py-4 text-xs">{o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join(", ")}</td>
                         <td className="px-6 py-4 text-right font-bold text-primary">Rp {o.total_amount?.toLocaleString()}</td>
                       </tr>
@@ -349,51 +356,138 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 2: MENU & STOK */}
+        {/* ================= TAB 2: MENU & GUDANG INVENTORY ================= */}
         {activeTab === "menu" && (
           <div className="space-y-6 animate-in fade-in">
-            <h2 className="text-2xl font-bold">Katalog Produk & Stok</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {products.map((p) => (
-                <div key={p.id} className="bg-white border rounded-2xl p-5 shadow-sm space-y-4">
-                  <h3 className="font-bold text-lg">{p.name}</h3>
-
-                  {/* EDIT HARGA */}
-                  <div className="bg-zinc-50 p-3 rounded-lg border">
-                    <p className="text-xs text-muted-foreground mb-1 text-center font-bold">Harga Jual</p>
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-primary">Rp {p.price.toLocaleString()}</span>
-                      <div className="flex gap-1">
-                        <Button variant="outline" size="sm" onClick={() => updateProductPrice(p.id, p.name, p.price - 1000)}>-1k</Button>
-                        <Button variant="outline" size="sm" onClick={() => updateProductPrice(p.id, p.name, p.price + 1000)}>+1k</Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* EDIT STOK */}
-                  <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
-                    <p className="text-xs text-orange-600 mb-1 text-center font-bold">Sisa Stok (Porsi)</p>
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xl">{p.stock ?? 100}</span>
-                      <div className="flex gap-1">
-                        <Button variant="secondary" size="sm" onClick={() => updateProductStock(p.id, p.name, p.stock ?? 100, -1)}>-</Button>
-                        <Button variant="secondary" size="sm" onClick={() => updateProductStock(p.id, p.name, p.stock ?? 100, 1)}>+</Button>
-                      </div>
-                    </div>
-                  </div>
-
-                </div>
-              ))}
+            <div className="flex gap-4 border-b">
+              <button onClick={() => setMenuSubTab("catalog")} className={`pb-2 px-4 font-bold transition-all ${menuSubTab === "catalog" ? "border-b-2 border-primary text-primary" : "text-muted-foreground hover:text-foreground"}`}>Katalog Menu</button>
+              <button onClick={() => setMenuSubTab("ingredients")} className={`pb-2 px-4 font-bold transition-all ${menuSubTab === "ingredients" ? "border-b-2 border-primary text-primary" : "text-muted-foreground hover:text-foreground"}`}>Gudang Bahan Baku</button>
             </div>
+
+            {menuSubTab === "catalog" ? (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                {/* FORM CRUD MENU */}
+                <div className="lg:col-span-1 bg-white border rounded-2xl p-6 shadow-sm h-fit space-y-4 border-primary/20 bg-primary/5">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-bold text-primary">{isEditingProduct ? "Edit Menu" : "Tambah Menu Baru"}</h3>
+                    {isEditingProduct && <Button variant="ghost" size="icon" onClick={resetProductForm} className="h-6 w-6"><X className="w-4 h-4" /></Button>}
+                  </div>
+
+                  <input type="text" placeholder="Nama Menu (cth: Ubi Drink)" value={newProduct.name} onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
+                  <input type="number" placeholder="Harga Jual (Rp)" value={newProduct.price || ""} onChange={(e) => setNewProduct({ ...newProduct, price: parseInt(e.target.value) })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
+                  <textarea placeholder="Deskripsi Singkat" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[60px]" />
+
+                  <div className="bg-white p-3 rounded-xl border space-y-3">
+                    <p className="text-xs font-bold text-orange-600">Nutrition & Portion Facts</p>
+                    <input type="text" placeholder="Porsi (1 Gelas 200ml, 3 Biji)" value={newProduct.portion_size} onChange={(e) => setNewProduct({ ...newProduct, portion_size: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-orange-400 outline-none" />
+                    <textarea placeholder="Bahan Utama (Ubi Ungu 50g, Susu 100ml)" value={newProduct.ingredients_text} onChange={(e) => setNewProduct({ ...newProduct, ingredients_text: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-orange-400 outline-none min-h-[80px]" />
+                    <div className="flex items-center gap-2">
+                      <input type="number" placeholder="Total Kalori" value={newProduct.calories || ""} onChange={(e) => setNewProduct({ ...newProduct, calories: parseInt(e.target.value) })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-orange-400 outline-none" />
+                      <span className="text-xs font-bold text-muted-foreground">Kkal</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t">
+                    <label className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 uppercase"><UploadCloud className="w-3.5 h-3.5" /> Foto Menu</label>
+                    <input type="file" accept="image/*" onChange={handleProductImageUpload} disabled={isUploadingProduct} className="w-full text-xs text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-primary/20 file:text-primary cursor-pointer" />
+                    {newProduct.image_url && <div className="relative w-full h-32 rounded-xl border overflow-hidden mt-2"><Image src={newProduct.image_url} alt="Preview" fill className="object-cover" /></div>}
+                  </div>
+
+                  <Button onClick={handleSaveProduct} disabled={isUploadingProduct} className="w-full font-bold shadow-md">
+                    {isEditingProduct ? <><Edit3 className="w-4 h-4 mr-2" /> Perbarui Menu</> : <><Plus className="w-4 h-4 mr-2" /> Simpan Menu</>}
+                  </Button>
+                </div>
+
+                {/* LIST KATALOG MENU */}
+                <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {products.map((p) => (
+                    <div key={p.id} className={`bg-white border rounded-2xl p-4 shadow-sm flex flex-col group transition-all ${editProductId === p.id ? 'border-primary ring-2 ring-primary/20' : ''}`}>
+                      <div className="flex gap-3 mb-3">
+                        <div className="relative w-20 h-20 rounded-xl overflow-hidden border bg-zinc-50">
+                          {p.image_url ? <Image src={p.image_url} alt={p.name} fill className="object-cover" /> : <ImageIcon className="w-8 h-8 m-auto text-zinc-300 mt-6" />}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex justify-between items-start">
+                            <h4 className="font-bold leading-tight line-clamp-2">{p.name}</h4>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => startEditProduct(p)} className="text-blue-500 p-1 hover:bg-blue-50 rounded"><Edit3 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => handleDeleteProduct(p.id, p.name)} className="text-red-500 p-1 hover:bg-red-50 rounded"><Trash2 className="w-3.5 h-3.5" /></button>
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{p.description}</p>
+                          <Badge variant="secondary" className="mt-1 text-[9px] bg-orange-100 text-orange-700">{p.calories || 0} Kkal</Badge>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 mt-auto pt-3 border-t">
+                        <div className="bg-zinc-50 p-2 rounded-lg text-center">
+                          <p className="text-[9px] text-muted-foreground mb-1">Harga Jual</p>
+                          <p className="font-bold text-primary text-sm">Rp {p.price.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-orange-50 p-2 rounded-lg text-center border border-orange-100">
+                          <p className="text-[9px] text-orange-600 mb-1">Stok Porsi Menu</p>
+                          <div className="flex items-center justify-between px-1">
+                            <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, -1)} className="text-orange-600 font-bold">-</button>
+                            <span className="font-black text-sm">{p.stock ?? 100}</span>
+                            <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, 1)} className="text-orange-600 font-bold">+</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 border-t pt-2">
+                        <p className="text-[10px] font-bold uppercase text-primary mb-1">Resep Terhubung (Gudang):</p>
+                        {p.product_ingredients?.length > 0 ? p.product_ingredients.map((ri: any) => (
+                          <div key={ri.id} className="text-[10px] flex justify-between text-muted-foreground">
+                            <span>{ri.ingredients?.name}</span>
+                            <span>{ri.amount_needed} {ri.ingredients?.unit}/porsi</span>
+                          </div>
+                        )) : <p className="text-[10px] text-orange-500 italic">Belum disetting di Database Admin.</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+                {/* FORM INPUT BAHAN BAKU */}
+                <div className="bg-white p-6 rounded-2xl border shadow-sm h-fit space-y-4">
+                  <h3 className="font-bold flex items-center gap-2"><Database className="w-4 h-4" /> Input Bahan Baru</h3>
+                  <input type="text" placeholder="Nama Bahan (cth: Matcha)" value={newIng.name} onChange={e => setNewIng({ ...newIng, name: e.target.value })} className="w-full border p-2 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  <input type="text" placeholder="Satuan (gram / ml / pcs)" value={newIng.unit} onChange={e => setNewIng({ ...newIng, unit: e.target.value })} className="w-full border p-2 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  <input type="number" placeholder="Stok Awal" value={newIng.stock_quantity || ""} onChange={e => setNewIng({ ...newIng, stock_quantity: parseFloat(e.target.value) })} className="w-full border p-2 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  <Button onClick={handleAddIngredient} className="w-full">Simpan ke Gudang</Button>
+                </div>
+
+                {/* LIST STOK GUDANG */}
+                <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {ingredients.map(ing => (
+                    <div key={ing.id} className="bg-white p-5 rounded-2xl border shadow-sm flex justify-between items-center hover:border-primary/50 transition-colors">
+                      <div>
+                        <p className="font-bold text-sm">{ing.name}</p>
+                        <p className={`text-2xl font-black ${ing.stock_quantity < 100 ? 'text-red-500' : 'text-primary'}`}>
+                          {ing.stock_quantity} <span className="text-xs font-normal text-muted-foreground">{ing.unit}</span>
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, 100)} className="h-7 text-xs">+100</Button>
+                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, -100)} className="h-7 text-xs">-100</Button>
+                      </div>
+                    </div>
+                  ))}
+                  {ingredients.length === 0 && <div className="col-span-full text-center py-10 text-muted-foreground border border-dashed rounded-xl">Gudang kosong.</div>}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* TAB 3: ANALYTICS & EXPORT */}
+        {/* ================= TAB 3: ANALYTICS & EXPORT ================= */}
         {activeTab === "analytics" && (
           <div className="space-y-8 animate-in fade-in">
-            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <h2 className="text-2xl font-bold">Analisa Performa</h2>
-              {/* TOMBOL EXPORT LENGKAP */}
               <div className="flex gap-2">
                 <Button onClick={exportPDF} variant="outline" className="gap-2 border-red-200 text-red-600 hover:bg-red-50"><FileText className="w-4 h-4" /> PDF</Button>
                 <Button onClick={exportExcel} variant="outline" className="gap-2 border-green-200 text-green-600 hover:bg-green-50"><FileSpreadsheet className="w-4 h-4" /> Excel</Button>
@@ -402,7 +496,6 @@ export default function AdminDashboard() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* GRAFIK 1: PENDAPATAN */}
               <div className="bg-white border rounded-2xl p-6 shadow-sm h-80">
                 <h3 className="font-bold mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-primary" /> Tren Pendapatan</h3>
                 <ResponsiveContainer width="100%" height="100%">
@@ -416,7 +509,6 @@ export default function AdminDashboard() {
                 </ResponsiveContainer>
               </div>
 
-              {/* GRAFIK 2: ITEM TERJUAL */}
               <div className="bg-white border rounded-2xl p-6 shadow-sm h-80">
                 <h3 className="font-bold mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-orange-500" /> Item Terlaris (Biji)</h3>
                 <ResponsiveContainer width="100%" height="100%">
@@ -433,11 +525,11 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 4: LOGS */}
+        {/* ================= TAB 4: LOGS ================= */}
         {activeTab === "logs" && (
           <div className="space-y-6 animate-in fade-in">
             <h2 className="text-2xl font-bold flex gap-2"><Activity className="text-primary" /> Audit Log Aktivitas</h2>
-            <div className="bg-white border rounded-2xl shadow-sm overflow-hidden max-h-[600px] overflow-y-auto custom-scrollbar">
+            <div className="bg-white border rounded-2xl shadow-sm overflow-hidden max-h-[600px] overflow-y-auto">
               <table className="w-full text-sm text-left">
                 <thead className="bg-zinc-50 sticky top-0 z-10 border-b">
                   <tr>
@@ -461,7 +553,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* TAB 5: TIM (CRUD LENGKAP: CREATE, READ, UPDATE, DELETE) */}
+        {/* ================= TAB 5: TIM ================= */}
         {activeTab === "team" && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
             <h2 className="text-2xl font-bold flex gap-2"><Users className="text-primary" /> Anggota Kelompok 7</h2>
@@ -470,16 +562,17 @@ export default function AdminDashboard() {
               {/* FORM DINAMIS (TAMBAH / EDIT) */}
               <div className="lg:col-span-1 bg-white border rounded-2xl p-6 shadow-sm h-fit space-y-4 border-primary/20 bg-primary/5">
                 <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-primary">{isEditing ? "Edit Profil Anggota" : "Daftarkan Anggota"}</h3>
-                  {isEditing && <Button variant="ghost" size="icon" onClick={resetForm} className="h-6 w-6"><X className="w-4 h-4" /></Button>}
+                  <h3 className="font-bold text-primary">{isEditingTeam ? "Edit Profil Anggota" : "Daftarkan Anggota"}</h3>
+                  {isEditingTeam && <Button variant="ghost" size="icon" onClick={resetTeamForm} className="h-6 w-6"><X className="w-4 h-4" /></Button>}
                 </div>
+
                 <input type="text" placeholder="Nama Lengkap" value={newMember.name} onChange={(e) => setNewMember({ ...newMember, name: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
                 <input type="text" placeholder="Role (cth: Hacker)" value={newMember.role} onChange={(e) => setNewMember({ ...newMember, role: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
                 <input type="number" placeholder="Urutan (1-10)" value={newMember.order_priority} onChange={(e) => setNewMember({ ...newMember, order_priority: parseInt(e.target.value) })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
 
                 <div className="space-y-2 pt-2 border-t">
                   <label className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 uppercase tracking-wider"><UploadCloud className="w-3.5 h-3.5" /> Ganti Foto Profil</label>
-                  <input type="file" accept="image/*" onChange={handleImageUpload} disabled={isUploading} className="w-full text-xs text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-primary/20 file:text-primary cursor-pointer" />
+                  <input type="file" accept="image/*" onChange={handleTeamImageUpload} disabled={isUploadingTeam} className="w-full text-xs text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-primary/20 file:text-primary cursor-pointer" />
                   {newMember.photo_url && (
                     <div className="relative w-16 h-16 rounded-full border-2 border-primary/30 overflow-hidden mt-2">
                       <Image src={newMember.photo_url} alt="Preview" fill className="object-cover" />
@@ -487,15 +580,15 @@ export default function AdminDashboard() {
                   )}
                 </div>
 
-                <Button onClick={handleSaveMember} disabled={isUploading} className="w-full font-bold shadow-md">
-                  {isEditing ? <><Edit3 className="w-4 h-4 mr-2" /> Perbarui Identitas</> : <><Plus className="w-4 h-4 mr-2" /> Simpan Anggota</>}
+                <Button onClick={handleSaveTeam} disabled={isUploadingTeam} className="w-full font-bold shadow-md">
+                  {isEditingTeam ? <><Edit3 className="w-4 h-4 mr-2" /> Perbarui Identitas</> : <><Plus className="w-4 h-4 mr-2" /> Simpan Anggota</>}
                 </Button>
               </div>
 
-              {/* LIST ANGGOTA DENGAN TOMBOL EDIT & DELETE */}
+              {/* LIST ANGGOTA */}
               <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {team.map((member) => (
-                  <div key={member.id} className={`bg-white border rounded-2xl p-4 shadow-sm flex items-center justify-between group transition-all ${editId === member.id ? 'border-primary ring-2 ring-primary/20' : ''}`}>
+                  <div key={member.id} className={`bg-white border rounded-2xl p-4 shadow-sm flex items-center justify-between group transition-all ${editTeamId === member.id ? 'border-primary ring-2 ring-primary/20' : ''}`}>
                     <div className="flex items-center gap-3">
                       <div className="relative w-12 h-12 rounded-full overflow-hidden border-2 border-zinc-100">
                         <Image src={member.photo_url || "/team-1.png"} alt={member.name} fill className="object-cover" />
@@ -506,10 +599,10 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:bg-blue-50" onClick={() => startEdit(member)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:bg-blue-50" onClick={() => startEditTeam(member)}>
                         <Edit3 className="w-4 h-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => handleDeleteMember(member.id, member.name)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => handleDeleteTeam(member.id, member.name)}>
                         <Trash2 className="w-4 h-4" />
                       </Button>
                     </div>
