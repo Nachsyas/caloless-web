@@ -1,36 +1,23 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+===== FILE: README.md =====
+<h1 align="center">🍠 CALOLESS Web Platform</h1>
 
-## Getting Started
+<p align="center">
+  <strong>Inovasi Kuliner Rendah Kalori Berbasis Kimia Pangan</strong>
+</p>
 
-First, run the development server:
+## 📖 Tentang Caloless
+CALOLESS adalah inovasi kuliner rendah kalori tanpa mengorbankan rasa. Web ini berfungsi sebagai **Company Profile** yang estetik sekaligus **Sales Media** dengan manajemen konten dinamis.
 
+## 🚀 Fitur Unggulan
+- **Full Dynamic Admin**: Ganti foto tim dan foto menu langsung dari website tanpa koding.
+- **Landing Page Interaktif**: Animasi smooth menggunakan Framer Motion.
+- **Integrated Payment**: Transaksi otomatis dengan Midtrans/Xendit.
+- **Optimized for M1 Pro**: Arsitektur Next.js terbaru untuk performa kilat.
+
+## 👥 Tim Pelaksana
+- Syahila Syerli Nur Fitria, Deasy Oriza Prasetiawan, Annisa Fitri, Fina Nurul Qoyyimah.
+
+## 🛠️ Setup
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
