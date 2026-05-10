@@ -230,7 +230,7 @@ export default function AdminDashboard() {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                       <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 12 }} width={80} tickFormatter={(value) => `Rp${value / 1000}k`} />
-                      <Tooltip formatter={(value: number) => `Rp ${value.toLocaleString("id-ID")}`} />
+                      <Tooltip formatter={(value: any) => `Rp ${Number(value).toLocaleString("id-ID")}`} />
                       <Line type="monotone" dataKey="Pendapatan" stroke="#8b5cf6" strokeWidth={3} dot={{ r: 6 }} activeDot={{ r: 8 }} />
                     </LineChart>
                   </ResponsiveContainer>
