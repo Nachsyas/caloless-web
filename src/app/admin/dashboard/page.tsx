@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Utensils, Users, BarChart3,
   Activity, FileText, FileSpreadsheet, File,
   Trash2, Plus, UploadCloud, Edit3, X, Database, Image as ImageIcon,
-  Info, UtensilsCrossed, XCircle
+  Info, UtensilsCrossed, XCircle, Calculator
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -40,10 +40,10 @@ export default function AdminDashboard() {
   const [editTeamId, setEditTeamId] = useState<string | null>(null);
   const [isUploadingTeam, setIsUploadingTeam] = useState(false);
 
-  // States for CRUD Product (Menu) - MENGGUNAKAN total_calories SESUAI SQL BARU
+  // States for CRUD Product (Menu) - KOTAK INPUT KALORI DIHAPUS, MURNI OTOMATIS
   const [newProduct, setNewProduct] = useState({
     name: "", price: 0, stock: 0, description: "",
-    portion_size: "", ingredients_text: "", total_calories: 0, image_url: ""
+    portion_size: "", ingredients_text: "", image_url: ""
   });
   const [isEditingProduct, setIsEditingProduct] = useState(false);
   const [editProductId, setEditProductId] = useState<string | null>(null);
@@ -85,19 +85,23 @@ export default function AdminDashboard() {
     await supabase.from("activity_logs").insert({ action_type: type, description: desc });
   };
 
+  // --- FUNGSI SUPER PINTAR: AUTO CALCULATE KALORI DARI DATABASE ---
+  const calculateAutoTotal = (recipe: any[]) => {
+    if (!recipe || recipe.length === 0) return 0;
+    return recipe.reduce((sum, item) => sum + (item.amount_needed * (item.ingredients?.calories_per_unit || 0)), 0).toFixed(0);
+  };
+
   // --- ORDER LOGIC ---
   const handleCompleteOrder = async (orderId: string, userName: string, items: any[]) => {
     const { error } = await supabase.from("orders").update({ status: "success" }).eq("id", orderId);
     if (error) return toast.error("Gagal update pesanan.");
 
     for (const item of items) {
-      // 1. Potong Stok Porsi Menu
       const { data: p } = await supabase.from("products").select("stock").eq("id", item.id).single();
       if (p) {
         await supabase.from("products").update({ stock: Math.max(0, (p.stock || 0) - item.quantity) }).eq("id", item.id);
       }
 
-      // 2. Potong Stok Bahan Baku (ERP Logic)
       const { data: recipe } = await supabase.from("product_ingredients").select("*").eq("product_id", item.id);
       if (recipe) {
         for (const r of recipe) {
@@ -122,7 +126,6 @@ export default function AdminDashboard() {
     insertLog("ORDER_CANCEL", `Membatalkan pesanan ${userName}.`);
   };
 
-  // --- RENDER LABEL STATUS PESANAN ---
   const renderStatusBadge = (status: string) => {
     switch (status) {
       case 'paid':
@@ -168,7 +171,7 @@ export default function AdminDashboard() {
   };
 
   const resetProductForm = () => {
-    setNewProduct({ name: "", price: 0, stock: 0, description: "", portion_size: "", ingredients_text: "", total_calories: 0, image_url: "" });
+    setNewProduct({ name: "", price: 0, stock: 0, description: "", portion_size: "", ingredients_text: "", image_url: "" });
     setIsEditingProduct(false);
     setEditProductId(null);
   };
@@ -177,7 +180,7 @@ export default function AdminDashboard() {
     setNewProduct({
       name: p.name, price: p.price, stock: p.stock || 0, description: p.description || "",
       portion_size: p.portion_size || "", ingredients_text: p.ingredients_text || "",
-      total_calories: p.total_calories || 0, image_url: p.image_url || ""
+      image_url: p.image_url || ""
     });
     setIsEditingProduct(true);
     setEditProductId(p.id);
@@ -455,7 +458,7 @@ export default function AdminDashboard() {
             {menuSubTab === "catalog" ? (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                {/* FORM EDIT/TAMBAH MENU */}
+                {/* FORM EDIT/TAMBAH MENU (TANPA INPUT TOTAL KALORI MANUAL) */}
                 <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-primary/20 shadow-xl h-fit space-y-4">
                   <div className="flex justify-between items-center border-b pb-3">
                     <h3 className="font-black text-primary uppercase tracking-wider">{isEditingProduct ? "Edit Menu" : "Tambah Menu"}</h3>
@@ -471,13 +474,10 @@ export default function AdminDashboard() {
                   <textarea placeholder="Deskripsi Singkat" value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary h-24" />
 
                   <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100 space-y-3">
-                    <p className="text-xs font-bold text-orange-600 flex items-center gap-1 uppercase"><Info className="w-3 h-3" /> Nutrition Setting</p>
+                    <p className="text-xs font-bold text-orange-600 flex items-center gap-1 uppercase"><Calculator className="w-3 h-3" /> Setup Teks Rincian</p>
                     <input type="text" placeholder="Porsi (Contoh: 3 Dimsum)" value={newProduct.portion_size} onChange={e => setNewProduct({ ...newProduct, portion_size: e.target.value })} className="w-full bg-white border p-2.5 rounded-lg text-xs" />
                     <textarea placeholder="Tulis rincian bahan (Untuk info pembeli)" value={newProduct.ingredients_text} onChange={e => setNewProduct({ ...newProduct, ingredients_text: e.target.value })} className="w-full bg-white border p-2.5 rounded-lg text-xs h-16" />
-                    <div className="flex items-center gap-2">
-                      <input type="number" placeholder="Total Kalori" value={newProduct.total_calories || ""} onChange={e => setNewProduct({ ...newProduct, total_calories: parseInt(e.target.value) })} className="w-full bg-white border p-2.5 rounded-lg text-xs" />
-                      <span className="text-xs font-bold text-muted-foreground">Kkal</span>
-                    </div>
+                    <p className="text-[10px] text-orange-500 italic mt-1">*Total Kalori kini dihitung otomatis oleh sistem ERP berdasarkan Resep SQL.</p>
                   </div>
 
                   <div className="space-y-2 pt-2 border-t">
@@ -495,64 +495,67 @@ export default function AdminDashboard() {
                   </Button>
                 </div>
 
-                {/* CATALOG LIST */}
+                {/* CATALOG LIST (TAMPILAN AUTO CALCULATE) */}
                 <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  {products.map((p) => (
-                    <div key={p.id} className={`group bg-white dark:bg-zinc-900 rounded-3xl border shadow-sm overflow-hidden transition-all hover:shadow-xl ${editProductId === p.id ? 'ring-2 ring-primary border-transparent' : ''}`}>
+                  {products.map((p) => {
+                    const autoTotalKcal = calculateAutoTotal(p.product_ingredients);
+                    return (
+                      <div key={p.id} className={`group bg-white dark:bg-zinc-900 rounded-3xl border shadow-sm overflow-hidden transition-all hover:shadow-xl ${editProductId === p.id ? 'ring-2 ring-primary border-transparent' : ''}`}>
 
-                      <div className="relative h-56 bg-zinc-100 border-b">
-                        {p.image_url ? (
-                          <Image src={p.image_url} alt={p.name} fill className="object-cover transition-transform group-hover:scale-105" />
-                        ) : (
-                          <ImageIcon className="w-12 h-12 m-auto absolute inset-0 text-zinc-300" />
-                        )}
+                        <div className="relative h-56 bg-zinc-100 border-b">
+                          {p.image_url ? (
+                            <Image src={p.image_url} alt={p.name} fill className="object-cover transition-transform group-hover:scale-105" />
+                          ) : (
+                            <ImageIcon className="w-12 h-12 m-auto absolute inset-0 text-zinc-300" />
+                          )}
 
-                        {/* Hover Preview Detail Kalori */}
-                        <div className="absolute inset-0 bg-black/80 text-white p-6 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-center backdrop-blur-md">
-                          <p className="text-xs font-black text-primary uppercase mb-2 flex items-center gap-2"><Info className="w-4 h-4" /> Rincian Kalori (Resep)</p>
-                          <div className="space-y-1.5 overflow-y-auto max-h-32 pr-2 custom-scrollbar">
-                            {p.product_ingredients?.map((ri: any, i: number) => (
-                              <div key={i} className="flex justify-between items-center text-[11px] border-b border-white/10 pb-1">
-                                <span className="flex items-center gap-1.5"><UtensilsCrossed className="w-3 h-3 text-primary" /> {ri.ingredients?.name} ({ri.amount_needed}{ri.ingredients?.unit})</span>
-                                <span className="font-bold">{(ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0)} kkal</span>
+                          {/* Hover Preview Detail Kalori Auto-Calculate */}
+                          <div className="absolute inset-0 bg-black/80 text-white p-6 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-center backdrop-blur-md">
+                            <p className="text-xs font-black text-primary uppercase mb-2 flex items-center gap-2"><Info className="w-4 h-4" /> Rincian Kalori (Resep)</p>
+                            <div className="space-y-1.5 overflow-y-auto max-h-32 pr-2 custom-scrollbar">
+                              {p.product_ingredients?.map((ri: any, i: number) => (
+                                <div key={i} className="flex justify-between items-center text-[11px] border-b border-white/10 pb-1">
+                                  <span className="flex items-center gap-1.5"><UtensilsCrossed className="w-3 h-3 text-primary" /> {ri.ingredients?.name} ({ri.amount_needed}{ri.ingredients?.unit})</span>
+                                  <span className="font-bold">{(ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0)} kkal</span>
+                                </div>
+                              ))}
+                              {p.product_ingredients?.length === 0 && <p className="text-[10px] italic text-zinc-400">Belum ada resep SQL.</p>}
+                            </div>
+                            <div className="mt-auto pt-3 border-t border-white/20 flex justify-between items-center">
+                              <span className="text-xs font-medium uppercase tracking-widest text-primary">Sistem Auto Total</span>
+                              <span className="text-2xl font-black text-white">{autoTotalKcal} <span className="text-xs text-primary">Kkal</span></span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-5 flex flex-col flex-1">
+                          <div className="flex justify-between items-start mb-1">
+                            <h4 className="text-lg font-black leading-tight text-zinc-800">{p.name}</h4>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => startEditProduct(p)} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"><Edit3 className="w-4 h-4" /></button>
+                              <button onClick={async () => { if (confirm("Hapus menu?")) { await supabase.from("products").delete().eq("id", p.id); fetchData(); } }} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><Trash2 className="w-4 h-4" /></button>
+                            </div>
+                          </div>
+                          <p className="text-xs text-muted-foreground line-clamp-2 mb-4 h-8">{p.description}</p>
+
+                          <div className="grid grid-cols-2 gap-3 mt-auto">
+                            <div className="bg-zinc-50 p-3 rounded-2xl border text-center">
+                              <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Harga Jual</p>
+                              <p className="text-lg font-black text-primary italic">Rp {p.price?.toLocaleString()}</p>
+                            </div>
+                            <div className="bg-orange-50 p-3 rounded-2xl border border-orange-100 text-center">
+                              <p className="text-[10px] font-bold text-orange-600 uppercase mb-1">Stok Porsi</p>
+                              <div className="flex items-center justify-between px-1">
+                                <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, -1)} className="font-black text-orange-600 text-xl hover:scale-110">-</button>
+                                <span className="font-black text-xl">{p.stock}</span>
+                                <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, 1)} className="font-black text-orange-600 text-xl hover:scale-110">+</button>
                               </div>
-                            ))}
-                            {p.product_ingredients?.length === 0 && <p className="text-[10px] italic text-zinc-400">Hubungkan resep di Database SQL.</p>}
-                          </div>
-                          <div className="mt-auto pt-3 border-t border-white/20 flex justify-between items-center">
-                            <span className="text-xs font-medium">Total Manual</span>
-                            <span className="text-2xl font-black text-primary">{p.total_calories} <span className="text-xs text-white">Kkal</span></span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="p-5 flex flex-col flex-1">
-                        <div className="flex justify-between items-start mb-1">
-                          <h4 className="text-lg font-black leading-tight text-zinc-800">{p.name}</h4>
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => startEditProduct(p)} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"><Edit3 className="w-4 h-4" /></button>
-                            <button onClick={async () => { if (confirm("Hapus menu?")) { await supabase.from("products").delete().eq("id", p.id); fetchData(); } }} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><Trash2 className="w-4 h-4" /></button>
-                          </div>
-                        </div>
-                        <p className="text-xs text-muted-foreground line-clamp-2 mb-4 h-8">{p.description}</p>
-
-                        <div className="grid grid-cols-2 gap-3 mt-auto">
-                          <div className="bg-zinc-50 p-3 rounded-2xl border text-center">
-                            <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Harga Jual</p>
-                            <p className="text-lg font-black text-primary italic">Rp {p.price?.toLocaleString()}</p>
-                          </div>
-                          <div className="bg-orange-50 p-3 rounded-2xl border border-orange-100 text-center">
-                            <p className="text-[10px] font-bold text-orange-600 uppercase mb-1">Stok Porsi</p>
-                            <div className="flex items-center justify-between px-1">
-                              <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, -1)} className="font-black text-orange-600 text-xl hover:scale-110">-</button>
-                              <span className="font-black text-xl">{p.stock}</span>
-                              <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, 1)} className="font-black text-orange-600 text-xl hover:scale-110">+</button>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (

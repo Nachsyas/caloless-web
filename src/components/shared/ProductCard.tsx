@@ -10,13 +10,17 @@ import { useCartStore } from "@/store/useCartStore";
 export function ProductCard({ product }: { product: any }) {
   const addToCart = useCartStore((state: any) => state.addToCart || state.addItem);
 
-  // Mengambil relasi resep dari ERP (Jika di-fetch dari Supabase)
+  // Mengambil relasi resep dari ERP 
   const recipeData = product.product_ingredients || [];
 
-  // Fallback: Jika relasi resep kosong, kita pisahkan teks dari input Admin (Contoh: "Ubi 50g, Susu 100ml")
   const manualIngredients = product.ingredients_text
     ? product.ingredients_text.split(',').map((item: string) => item.trim())
     : [];
+
+  // FUNGSI AUTO-CALCULATE DI SISI PEMBELI (AKURAT DARI SQL)
+  const autoTotalKcal = recipeData.length > 0
+    ? recipeData.reduce((sum: number, ri: any) => sum + (ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)), 0).toFixed(0)
+    : 0;
 
   const handleAddToCart = () => {
     if (product.stock <= 0) {
@@ -52,14 +56,13 @@ export function ProductCard({ product }: { product: any }) {
           </div>
         )}
 
-        {/* OVERLAY NUTRITION FACTS (SINKRON DARI DATABASE ADMIN) */}
+        {/* OVERLAY NUTRITION FACTS */}
         <div className="absolute inset-0 bg-black/85 text-white p-6 opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col justify-center backdrop-blur-md z-10">
           <h5 className="font-black italic border-b border-white/20 pb-2 mb-4 flex items-center gap-2 text-primary">
             <Info className="w-5 h-5" /> NUTRITION FACTS
           </h5>
 
           <div className="overflow-y-auto flex-1 pr-2 custom-scrollbar space-y-2">
-            {/* Prioritas 1: Tampilkan rincian dari ERP Relasi Database */}
             {recipeData.length > 0 ? (
               recipeData.map((ri: any, i: number) => {
                 const cal = (ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0);
@@ -74,7 +77,6 @@ export function ProductCard({ product }: { product: any }) {
                 );
               })
             ) :
-              /* Prioritas 2: Tampilkan teks manual jika relasi kosong */
               manualIngredients.length > 0 ? (
                 manualIngredients.map((ing: string, i: number) => (
                   <div key={i} className="flex justify-start items-center text-xs border-b border-white/10 pb-1.5">
@@ -92,9 +94,9 @@ export function ProductCard({ product }: { product: any }) {
           <div className="mt-4 pt-3 border-t-2 border-primary/50 shrink-0">
             <div className="flex justify-between items-end">
               <div>
-                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Kalori</p>
+                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Kalori Auto</p>
                 <p className="text-3xl font-black text-primary italic leading-none">
-                  {product.total_calories || product.calories || 0} <span className="text-xs text-white not-italic font-medium">kkal</span>
+                  {autoTotalKcal} <span className="text-xs text-white not-italic font-medium">kkal</span>
                 </p>
               </div>
               <Badge className="bg-primary/20 text-primary border-0 text-[10px] px-3 py-1 font-bold">
@@ -104,7 +106,7 @@ export function ProductCard({ product }: { product: any }) {
           </div>
         </div>
 
-        {/* INDIKATOR SISA STOK (Muncul jika stok menipis) */}
+        {/* INDIKATOR SISA STOK */}
         {product.stock <= 5 && product.stock > 0 && (
           <div className="absolute top-4 left-4 bg-orange-500 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg z-20 animate-pulse tracking-widest">
             SISA {product.stock} PORSI!

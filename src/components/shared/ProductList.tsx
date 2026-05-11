@@ -36,24 +36,23 @@ export async function ProductList() {
   let isUsingMock = false;
 
   if (!supabaseUrl || !supabaseKey) {
-    // Fallback if env vars are missing
     isUsingMock = true;
     products = mockProducts;
   } else {
     try {
       const supabase = await createClient();
+
+      // INI QUERY SAKTI ERP: Mengambil produk SEKALIGUS rincian bahan dari gudang
       const { data, error } = await supabase
         .from("products")
-        .select("*")
+        .select("*, product_ingredients(*, ingredients(*))")
         .order("id", { ascending: true });
 
-      // Supabase returns an error object if the table doesn't exist
       if (error) {
         console.error("Error fetching products:", error.message || error);
         isUsingMock = true;
         products = mockProducts;
       } else if (data) {
-        // Only use real data if it exists and array is not empty, otherwise show mock just for the demo
         if (data.length === 0) {
           isUsingMock = true;
           products = mockProducts;
