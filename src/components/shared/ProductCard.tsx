@@ -2,68 +2,29 @@
 
 import Image from "next/image";
 import { toast } from "sonner";
-import { ShoppingCart, Info } from "lucide-react";
+import { ShoppingCart, Info, UtensilsCrossed, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useCartStore } from "@/store/useCartStore";
-
-// Fungsi pencari nutrisi berdasarkan NAMA produk (Lebih aman dari ID Supabase)
-const getNutrition = (productName: string) => {
-  if (!productName) return null;
-  const name = productName.toLowerCase();
-
-  if (name.includes("zensum") || name.includes("dimsum")) {
-    return {
-      ingredients: [
-        { name: "Dada Ayam (500gr)", kcal: 825 },
-        { name: "Keju (50gr)", kcal: 200 },
-        { name: "Kulit Kembang Tahu", kcal: 170 },
-        { name: "Udang (150gr)", kcal: 149 },
-        { name: "Telur (2 buah)", kcal: 143 },
-        { name: "Minyak Wijen (2 sdm)", kcal: 240 },
-        { name: "Wortel & Daun Bawang", kcal: 50 },
-        { name: "Bumbu (Saus tiram, dll)", kcal: 30 },
-      ],
-      totalKcal: 1807,
-      note: "Total kalori di atas adalah per adonan. Estimasi 1 Porsi (3 biji) = 180 kkal."
-    };
-  }
-
-  if (name.includes("chia") || name.includes("cheese")) {
-    return {
-      ingredients: [
-        { name: "Keju (30gr)", kcal: 120 },
-        { name: "Ubi Ungu (100gr)", kcal: 86 },
-        { name: "Chia Seeds (15gr)", kcal: 73 },
-        { name: "Susu Low Fat (100ml)", kcal: 43 },
-      ],
-      totalKcal: 322,
-      note: "Kalori per 1 porsi dessert."
-    };
-  }
-
-  if (name.includes("drink") || name.includes("minuman") || name.includes("ubi")) {
-    return {
-      ingredients: [
-        { name: "Ubi Ungu (150gr)", kcal: 129 },
-        { name: "Susu Low Fat (200ml)", kcal: 86 },
-        { name: "Air Mineral & Es Batu", kcal: 0 },
-        { name: "Gula Stevia", kcal: 0 },
-      ],
-      totalKcal: 215,
-      note: "Kalori per 1 gelas porsi."
-    };
-  }
-
-  return null;
-};
 
 export function ProductCard({ product }: { product: any }) {
   const addToCart = useCartStore((state: any) => state.addToCart || state.addItem);
 
-  // Mengambil data kalori berdasarkan nama produk
-  const nutrition = getNutrition(product.name);
+  // Mengambil relasi resep dari ERP (Jika di-fetch dari Supabase)
+  const recipeData = product.product_ingredients || [];
+
+  // Fallback: Jika relasi resep kosong, kita pisahkan teks dari input Admin (Contoh: "Ubi 50g, Susu 100ml")
+  const manualIngredients = product.ingredients_text
+    ? product.ingredients_text.split(',').map((item: string) => item.trim())
+    : [];
 
   const handleAddToCart = () => {
+    if (product.stock <= 0) {
+      return toast.error("Stok habis!", {
+        description: "Mohon maaf, menu ini sedang tidak tersedia."
+      });
+    }
+
     if (addToCart) addToCart(product);
     toast.success("Berhasil ditambahkan!", {
       description: "Pesanan Anda sudah dimasukkan ke keranjang.",
@@ -73,67 +34,112 @@ export function ProductCard({ product }: { product: any }) {
   };
 
   return (
-    <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-border p-5 flex flex-col shadow-sm hover:shadow-md transition-shadow h-full group relative overflow-hidden">
+    <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 p-5 flex flex-col shadow-sm hover:shadow-xl transition-all duration-300 h-full group relative overflow-hidden">
 
-      {/* Area Gambar Produk */}
-      <div className="relative w-full h-56 rounded-xl overflow-hidden bg-secondary mb-4 border border-border cursor-pointer">
+      {/* ================= AREA FOTO BESAR & HOVER ================= */}
+      <div className="relative w-full h-64 sm:h-72 rounded-2xl overflow-hidden bg-zinc-100 mb-5 border border-zinc-100">
         {product.image_url ? (
           <Image
             src={product.image_url}
             alt={product.name}
             fill
-            className="object-cover group-hover:scale-105 transition-transform duration-500"
+            className="object-cover group-hover:scale-110 transition-transform duration-700"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">No Image</div>
+          <div className="w-full h-full flex items-center justify-center text-zinc-300">
+            <ImageIcon className="w-12 h-12" />
+          </div>
         )}
 
-        {/* Overlay Ingredients & Kalori (Muncul saat cursor diletakkan di atas gambar) */}
-        {nutrition && (
-          <div className="absolute inset-0 bg-black/85 text-white p-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-center backdrop-blur-sm z-10">
-            <h5 className="font-bold border-b border-white/20 pb-2 mb-2 flex items-center gap-2 text-sm">
-              <Info className="w-4 h-4 text-primary" /> Nutrition Facts
-            </h5>
-            <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar">
-              <ul className="space-y-1.5 text-[11px] sm:text-xs">
-                {nutrition.ingredients.map((ing: any, i: number) => (
-                  <li key={i} className="flex justify-between items-center border-b border-white/5 pb-1">
-                    <span className="text-gray-300 pr-2">{ing.name}</span>
-                    <span className="font-mono text-primary font-bold shrink-0">{ing.kcal} kcal</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="mt-2 pt-2 border-t border-white/20 shrink-0">
-              <div className="flex justify-between items-center font-bold text-sm">
-                <span>Total</span>
-                <span className="text-primary">{nutrition.totalKcal} kcal</span>
+        {/* OVERLAY NUTRITION FACTS (SINKRON DARI DATABASE ADMIN) */}
+        <div className="absolute inset-0 bg-black/85 text-white p-6 opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col justify-center backdrop-blur-md z-10">
+          <h5 className="font-black italic border-b border-white/20 pb-2 mb-4 flex items-center gap-2 text-primary">
+            <Info className="w-5 h-5" /> NUTRITION FACTS
+          </h5>
+
+          <div className="overflow-y-auto flex-1 pr-2 custom-scrollbar space-y-2">
+            {/* Prioritas 1: Tampilkan rincian dari ERP Relasi Database */}
+            {recipeData.length > 0 ? (
+              recipeData.map((ri: any, i: number) => {
+                const cal = (ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0);
+                return (
+                  <div key={i} className="flex justify-between items-center text-xs border-b border-white/10 pb-1.5">
+                    <span className="flex items-center gap-2 text-zinc-300">
+                      <UtensilsCrossed className="w-3.5 h-3.5 text-primary shrink-0" />
+                      {ri.ingredients?.name} <span className="opacity-50">({ri.amount_needed}{ri.ingredients?.unit})</span>
+                    </span>
+                    <span className="font-mono font-bold text-white tracking-widest">{cal} kkal</span>
+                  </div>
+                );
+              })
+            ) :
+              /* Prioritas 2: Tampilkan teks manual jika relasi kosong */
+              manualIngredients.length > 0 ? (
+                manualIngredients.map((ing: string, i: number) => (
+                  <div key={i} className="flex justify-start items-center text-xs border-b border-white/10 pb-1.5">
+                    <span className="flex items-center gap-2 text-zinc-300">
+                      <UtensilsCrossed className="w-3.5 h-3.5 text-primary shrink-0" />
+                      {ing}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-zinc-500 italic">Rincian bahan belum diinput oleh Admin.</p>
+              )}
+          </div>
+
+          <div className="mt-4 pt-3 border-t-2 border-primary/50 shrink-0">
+            <div className="flex justify-between items-end">
+              <div>
+                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Kalori</p>
+                <p className="text-3xl font-black text-primary italic leading-none">
+                  {product.total_calories || product.calories || 0} <span className="text-xs text-white not-italic font-medium">kkal</span>
+                </p>
               </div>
-              <p className="text-[9px] text-gray-400 mt-1 leading-tight">{nutrition.note}</p>
+              <Badge className="bg-primary/20 text-primary border-0 text-[10px] px-3 py-1 font-bold">
+                {product.portion_size || "1 Porsi"}
+              </Badge>
             </div>
+          </div>
+        </div>
+
+        {/* INDIKATOR SISA STOK (Muncul jika stok menipis) */}
+        {product.stock <= 5 && product.stock > 0 && (
+          <div className="absolute top-4 left-4 bg-orange-500 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg z-20 animate-pulse tracking-widest">
+            SISA {product.stock} PORSI!
           </div>
         )}
       </div>
 
-      {/* Area Detail Produk */}
-      <div className="flex-1 flex flex-col">
-        <h4 className="font-bold text-lg mb-1">{product.name}</h4>
-        {product.description && (
-          <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-            {product.description}
+      {/* ================= AREA TEKS DESKRIPSI & HARGA ================= */}
+      <div className="flex-1 flex flex-col px-1">
+        <div className="mb-2">
+          <h4 className="font-black text-2xl text-zinc-800 tracking-tight group-hover:text-primary transition-colors">
+            {product.name}
+          </h4>
+          <p className="text-sm text-zinc-500 line-clamp-2 mt-1.5 leading-relaxed font-medium">
+            {product.description || "Hidangan sehat dan lezat bebas khawatir."}
           </p>
-        )}
-        <p className="text-lg font-extrabold text-primary mt-auto mb-4">
-          Rp {product.price?.toLocaleString("id-ID")}
-        </p>
-        <Button
-          onClick={handleAddToCart}
-          className="w-full gap-2 rounded-full font-bold shadow-sm hover:scale-[1.02] active:scale-95 transition-all"
-        >
-          <ShoppingCart className="w-4 h-4" />
-          Pesan Sekarang
-        </Button>
+        </div>
+
+        <div className="mt-auto pt-5 flex items-center justify-between">
+          <p className="text-2xl font-black text-primary italic tracking-tighter">
+            Rp {product.price?.toLocaleString("id-ID")}
+          </p>
+          <Button
+            onClick={handleAddToCart}
+            disabled={product.stock <= 0}
+            className={`rounded-2xl font-black shadow-lg transition-all hover:scale-105 active:scale-95 px-6 py-6 ${product.stock <= 0 ? 'bg-zinc-200 text-zinc-400 cursor-not-allowed' : 'bg-primary text-white hover:bg-primary/90'}`}
+          >
+            {product.stock <= 0 ? 'HABIS' : (
+              <>
+                <ShoppingCart className="w-5 h-5 mr-2" />
+                Pesan
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   );

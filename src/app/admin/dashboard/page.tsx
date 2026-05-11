@@ -8,7 +8,8 @@ import {
   CheckCircle2, Clock, Package, MapPin, History,
   LayoutDashboard, Utensils, Users, BarChart3,
   Activity, FileText, FileSpreadsheet, File,
-  Trash2, Plus, UploadCloud, Edit3, X, Database, Image as ImageIcon
+  Trash2, Plus, UploadCloud, Edit3, X, Database, Image as ImageIcon,
+  Info, UtensilsCrossed, XCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -18,8 +19,8 @@ import {
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel } from 'docx';
 import { saveAs } from 'file-saver';
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel } from 'docx';
 import Image from "next/image";
 
 export default function AdminDashboard() {
@@ -29,52 +30,52 @@ export default function AdminDashboard() {
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [ingredients, setIngredients] = useState<any[]>([]);
-  const [logs, setLogs] = useState<any[]>([]);
   const [team, setTeam] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form State: TIM
+  // States for CRUD Team
   const [newMember, setNewMember] = useState({ name: "", role: "", photo_url: "", order_priority: 5 });
   const [isEditingTeam, setIsEditingTeam] = useState(false);
   const [editTeamId, setEditTeamId] = useState<string | null>(null);
   const [isUploadingTeam, setIsUploadingTeam] = useState(false);
 
-  // Form State: MENU
+  // States for CRUD Product (Menu) - MENGGUNAKAN total_calories SESUAI SQL BARU
   const [newProduct, setNewProduct] = useState({
-    name: "", price: 0, stock: 100, description: "",
-    portion_size: "", ingredients_text: "", calories: 0, image_url: ""
+    name: "", price: 0, stock: 0, description: "",
+    portion_size: "", ingredients_text: "", total_calories: 0, image_url: ""
   });
   const [isEditingProduct, setIsEditingProduct] = useState(false);
   const [editProductId, setEditProductId] = useState<string | null>(null);
   const [isUploadingProduct, setIsUploadingProduct] = useState(false);
 
-  // Form State: GUDANG BAHAN BAKU
-  const [newIng, setNewIng] = useState({ name: "", unit: "", stock_quantity: 0 });
+  // States for CRUD Ingredients (Gudang)
+  const [newIng, setNewIng] = useState({ name: "", unit: "", stock_quantity: 0, calories_per_unit: 0 });
 
   const supabase = createClient();
 
   useEffect(() => {
     fetchData();
-    const channel = supabase.channel("admin-realtime")
+    const channel = supabase.channel("erp-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs" }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, () => fetchData())
       .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => fetchData())
       .on("postgres_changes", { event: "*", schema: "public", table: "ingredients" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs" }, () => fetchData())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
 
   const fetchData = async () => {
+    const { data: p } = await supabase.from("products").select("*, product_ingredients(*, ingredients(*))").order("name");
+    const { data: i } = await supabase.from("ingredients").select("*").order("name");
     const { data: o } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
-    const { data: p } = await supabase.from("products").select("*, product_ingredients(*, ingredients(*))").order("id", { ascending: true });
-    const { data: i } = await supabase.from("ingredients").select("*").order("name", { ascending: true });
-    const { data: t } = await supabase.from("team_members").select("*").order("order_priority", { ascending: true });
+    const { data: t } = await supabase.from("team_members").select("*").order("order_priority");
     const { data: l } = await supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(50);
 
-    if (o) setOrders(o);
     if (p) setProducts(p);
     if (i) setIngredients(i);
+    if (o) setOrders(o);
     if (t) setTeam(t);
     if (l) setLogs(l);
     setLoading(false);
@@ -84,82 +85,102 @@ export default function AdminDashboard() {
     await supabase.from("activity_logs").insert({ action_type: type, description: desc });
   };
 
-  // --- CRUD PESANAN & AUTO DECREMENT INVENTORY ---
+  // --- ORDER LOGIC ---
   const handleCompleteOrder = async (orderId: string, userName: string, items: any[]) => {
     const { error } = await supabase.from("orders").update({ status: "success" }).eq("id", orderId);
-    if (error) return toast.error("Gagal menyelesaikan pesanan.");
+    if (error) return toast.error("Gagal update pesanan.");
 
     for (const item of items) {
-      // 1. Kurangi Porsi Produk
+      // 1. Potong Stok Porsi Menu
       const { data: p } = await supabase.from("products").select("stock").eq("id", item.id).single();
       if (p) {
-        await supabase.from("products").update({ stock: Math.max(0, p.stock - item.quantity) }).eq("id", item.id);
+        await supabase.from("products").update({ stock: Math.max(0, (p.stock || 0) - item.quantity) }).eq("id", item.id);
       }
 
-      // 2. Kurangi Stok Bahan Baku di Gudang berdasarkan Resep
+      // 2. Potong Stok Bahan Baku (ERP Logic)
       const { data: recipe } = await supabase.from("product_ingredients").select("*").eq("product_id", item.id);
       if (recipe) {
-        for (const ing of recipe) {
-          const { data: inv } = await supabase.from("ingredients").select("stock_quantity").eq("id", ing.ingredient_id).single();
-          if (inv) {
-            const totalUsed = ing.amount_needed * item.quantity;
+        for (const r of recipe) {
+          const { data: ing } = await supabase.from("ingredients").select("stock_quantity").eq("id", r.ingredient_id).single();
+          if (ing) {
+            const totalUsed = r.amount_needed * item.quantity;
             await supabase.from("ingredients").update({
-              stock_quantity: Math.max(0, inv.stock_quantity - totalUsed)
-            }).eq("id", ing.ingredient_id);
+              stock_quantity: Math.max(0, ing.stock_quantity - totalUsed)
+            }).eq("id", r.ingredient_id);
           }
         }
       }
     }
-    toast.success("Pesanan Selesai! Stok menu & bahan baku otomatis berkurang.");
-    insertLog("PESANAN_SELESAI", `Pesanan ${userName} selesai.`);
+    toast.success("Pesanan Selesai!");
+    insertLog("ORDER_SUCCESS", `Pesanan ${userName} telah diselesaikan.`);
   };
 
-  // --- CRUD MENU ---
-  const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    setIsUploadingProduct(true); const toastId = toast.loading("Mengunggah foto menu...");
-    try {
-      const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
-      const { error } = await supabase.storage.from('product-photos').upload(`menus/${fileName}`, file);
-      if (error) throw error;
-      const { data } = supabase.storage.from('product-photos').getPublicUrl(`menus/${fileName}`);
+  const handleCancelOrder = async (orderId: string, userName: string) => {
+    if (!confirm("Batalkan pesanan ini?")) return;
+    await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
+    toast.success("Pesanan dibatalkan.");
+    insertLog("ORDER_CANCEL", `Membatalkan pesanan ${userName}.`);
+  };
+
+  // --- RENDER LABEL STATUS PESANAN ---
+  const renderStatusBadge = (status: string) => {
+    switch (status) {
+      case 'paid':
+      case 'success':
+        return <Badge className="bg-green-500 hover:bg-green-600 text-white border-0 shadow-sm px-3 py-1 text-xs">Pembayaran ✅</Badge>;
+      case 'pending':
+        return <Badge variant="outline" className="border-orange-400 text-orange-600 bg-orange-50 shadow-sm px-3 py-1 text-xs">Menunggu Pembayaran ⏳</Badge>;
+      case 'cancelled':
+        return <Badge variant="destructive" className="shadow-sm px-3 py-1 text-xs">Pesanan Dibatalkan ❌</Badge>;
+      default:
+        return <Badge variant="secondary" className="uppercase px-3 py-1 text-xs">{status}</Badge>;
+    }
+  };
+
+  // --- MENU LOGIC ---
+  const handleProductUpload = async (e: any) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsUploadingProduct(true);
+    const fileName = `${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("product-photos").upload(`menus/${fileName}`, file);
+    if (!error) {
+      const { data } = supabase.storage.from("product-photos").getPublicUrl(`menus/${fileName}`);
       setNewProduct({ ...newProduct, image_url: data.publicUrl });
-      toast.success("Foto menu siap!", { id: toastId });
-    } catch (err: any) { toast.error("Gagal upload: " + err.message, { id: toastId }); }
-    finally { setIsUploadingProduct(false); }
+      toast.success("Foto diunggah!");
+    }
+    setIsUploadingProduct(false);
   };
 
   const handleSaveProduct = async () => {
     if (!newProduct.name || newProduct.price <= 0) return toast.error("Nama & Harga valid wajib diisi!");
+
     if (isEditingProduct && editProductId) {
-      const { error } = await supabase.from("products").update(newProduct).eq("id", editProductId);
-      if (!error) {
-        toast.success("Menu diperbarui!");
-        insertLog("UPDATE_MENU", `Update detail menu: ${newProduct.name}`);
-        resetProductForm();
-      }
+      await supabase.from("products").update(newProduct).eq("id", editProductId);
+      toast.success("Menu diupdate!");
+      insertLog("UPDATE_MENU", `Mengubah data menu ${newProduct.name}`);
     } else {
-      const { error } = await supabase.from("products").insert([newProduct]);
-      if (!error) {
-        toast.success("Menu ditambahkan!");
-        insertLog("TAMBAH_MENU", `Tambah menu: ${newProduct.name}`);
-        resetProductForm();
-      }
+      await supabase.from("products").insert([newProduct]);
+      toast.success("Menu baru ditambah!");
+      insertLog("TAMBAH_MENU", `Menambah menu baru ${newProduct.name}`);
     }
+    resetProductForm();
   };
 
   const resetProductForm = () => {
-    setNewProduct({ name: "", price: 0, stock: 100, description: "", portion_size: "", ingredients_text: "", calories: 0, image_url: "" });
-    setIsEditingProduct(false); setEditProductId(null);
+    setNewProduct({ name: "", price: 0, stock: 0, description: "", portion_size: "", ingredients_text: "", total_calories: 0, image_url: "" });
+    setIsEditingProduct(false);
+    setEditProductId(null);
   };
 
   const startEditProduct = (p: any) => {
     setNewProduct({
-      name: p.name, price: p.price, stock: p.stock ?? 0, description: p.description || "",
+      name: p.name, price: p.price, stock: p.stock || 0, description: p.description || "",
       portion_size: p.portion_size || "", ingredients_text: p.ingredients_text || "",
-      calories: p.calories || 0, image_url: p.image_url || ""
+      total_calories: p.total_calories || 0, image_url: p.image_url || ""
     });
-    setEditProductId(p.id); setIsEditingProduct(true);
+    setIsEditingProduct(true);
+    setEditProductId(p.id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -172,21 +193,16 @@ export default function AdminDashboard() {
   const updateProductStockOnly = async (id: string, name: string, curr: number, change: number) => {
     const newStock = Math.max(0, curr + change);
     const { error } = await supabase.from("products").update({ stock: newStock }).eq("id", id);
-    if (!error) {
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p));
-      insertLog("UPDATE_STOK", `Stok ${name} jadi ${newStock}`);
-    }
+    if (!error) { setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p)); insertLog("UPDATE_STOK", `Stok ${name} jadi ${newStock}`); }
   };
 
-  // --- CRUD GUDANG BAHAN BAKU ---
+  // --- INGREDIENT LOGIC ---
   const handleAddIngredient = async () => {
     if (!newIng.name || !newIng.unit) return toast.error("Nama & Satuan wajib diisi!");
-    const { error } = await supabase.from("ingredients").insert([newIng]);
-    if (!error) {
-      toast.success("Bahan baku ditambahkan!");
-      insertLog("TAMBAH_BAHAN", `Tambah bahan baku: ${newIng.name}`);
-      setNewIng({ name: "", unit: "", stock_quantity: 0 });
-    }
+    await supabase.from("ingredients").insert([newIng]);
+    toast.success("Bahan baku masuk gudang!");
+    insertLog("TAMBAH_GUDANG", `Menambah bahan baku ${newIng.name}`);
+    setNewIng({ name: "", unit: "", stock_quantity: 0, calories_per_unit: 0 });
   };
 
   const updateIngStock = async (id: string, curr: number, change: number) => {
@@ -194,76 +210,97 @@ export default function AdminDashboard() {
     await supabase.from("ingredients").update({ stock_quantity: newStock }).eq("id", id);
   };
 
-  // --- CRUD TIM ---
-  const handleTeamImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    setIsUploadingTeam(true); const toastId = toast.loading("Mengunggah foto...");
-    try {
-      const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
-      await supabase.storage.from('team-photos').upload(`profiles/${fileName}`, file);
-      const { data } = supabase.storage.from('team-photos').getPublicUrl(`profiles/${fileName}`);
+  // --- TEAM LOGIC ---
+  const handleTeamUpload = async (e: any) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsUploadingTeam(true);
+    const fileName = `${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("team-photos").upload(`profiles/${fileName}`, file);
+    if (!error) {
+      const { data } = supabase.storage.from("team-photos").getPublicUrl(`profiles/${fileName}`);
       setNewMember({ ...newMember, photo_url: data.publicUrl });
-      toast.success("Foto siap!", { id: toastId });
-    } catch (err: any) { toast.error("Gagal upload."); } finally { setIsUploadingTeam(false); }
+      toast.success("Foto tim diunggah!");
+    }
+    setIsUploadingTeam(false);
   };
 
   const handleSaveTeam = async () => {
     if (!newMember.name || !newMember.role) return toast.error("Nama & Role wajib!");
     if (isEditingTeam && editTeamId) {
-      const { error } = await supabase.from("team_members").update(newMember).eq("id", editTeamId);
-      if (!error) { toast.success("Anggota diperbarui!"); resetTeamForm(); }
+      await supabase.from("team_members").update(newMember).eq("id", editTeamId);
+      toast.success("Anggota diupdate!");
     } else {
-      const { error } = await supabase.from("team_members").insert([newMember]);
-      if (!error) { toast.success("Anggota ditambahkan!"); resetTeamForm(); }
+      await supabase.from("team_members").insert([newMember]);
+      toast.success("Anggota baru ditambah!");
     }
+    setNewMember({ name: "", role: "", photo_url: "", order_priority: 5 });
+    setIsEditingTeam(false);
+    setEditTeamId(null);
   };
 
   const resetTeamForm = () => { setNewMember({ name: "", role: "", photo_url: "", order_priority: 5 }); setIsEditingTeam(false); setEditTeamId(null); };
   const startEditTeam = (m: any) => { setNewMember({ name: m.name, role: m.role, photo_url: m.photo_url || "", order_priority: m.order_priority || 5 }); setEditTeamId(m.id); setIsEditingTeam(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteTeam = async (id: string, name: string) => { await supabase.from("team_members").delete().eq("id", id); toast.success("Dihapus."); };
 
-  // --- ANALYTICS & EXPORT ---
+  // --- ANALYTICS & EXPORT LOGIC ---
   const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid");
-  const historyOrders = orders.filter(o => o.status === "success");
+  const historyOrders = orders.filter(o => o.status === "success" || o.status === "cancelled");
 
-  const dailyRevenueData = Object.entries(historyOrders.reduce((acc: any, o) => {
-    const date = new Date(o.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
-    acc[date] = (acc[date] || 0) + o.total_amount; return acc;
-  }, {})).map(([date, Pendapatan]) => ({ date, Pendapatan }));
+  const dailyRevenueData = Object.entries(
+    historyOrders.filter(o => o.status === "success").reduce((acc: any, o) => {
+      const date = new Date(o.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+      acc[date] = (acc[date] || 0) + o.total_amount;
+      return acc;
+    }, {})
+  ).map(([date, Pendapatan]) => ({ date, Pendapatan }));
 
-  const itemSoldData = Object.entries(historyOrders.reduce((acc: any, order) => {
-    order.items_json?.forEach((i: any) => {
-      let qty = i.quantity; if (i.name.toLowerCase().includes("zensum")) qty *= 3;
-      acc[i.name] = (acc[i.name] || 0) + qty;
-    });
-    return acc;
-  }, {})).map(([name, Terjual]) => ({ name, Terjual }));
+  const itemSoldData = Object.entries(
+    historyOrders.filter(o => o.status === "success").reduce((acc: any, order) => {
+      order.items_json?.forEach((i: any) => {
+        let qty = i.quantity;
+        if (i.name.toLowerCase().includes("zensum")) qty *= 3;
+        acc[i.name] = (acc[i.name] || 0) + qty;
+      });
+      return acc;
+    }, {})
+  ).map(([name, Terjual]) => ({ name, Terjual }));
 
   const exportExcel = () => {
     try {
-      if (historyOrders.length === 0) return toast.error("Tidak ada data Riwayat untuk diexport!");
+      if (historyOrders.length === 0) return toast.error("Tidak ada data untuk di-export.");
       const data = historyOrders.map(o => ({
-        "Waktu Transaksi": o.created_at ? new Date(o.created_at).toLocaleString("id-ID") : "-",
-        "Pemesan": o.user_name || "-",
-        "WhatsApp": o.customer_phone || "-",
-        "Tipe Pengiriman": o.delivery_type ? o.delivery_type.toUpperCase() : "-",
-        "Detail Order": o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join(", ") || "-",
+        "Waktu Transaksi": new Date(o.created_at).toLocaleString("id-ID"),
+        "Status": o.status.toUpperCase(),
+        "Nama Pemesan": o.user_name || "-",
+        "Item Dibeli": o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join(", ") || "-",
         "Total (Rp)": o.total_amount || 0
       }));
-      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Laporan Penjualan"); XLSX.writeFile(wb, "Laporan_Caloless.xlsx");
-      toast.success("Excel berhasil diunduh"); insertLog("EXPORT_REPORT", "Export Excel Laporan Keuangan");
-    } catch (e: any) { toast.error("Gagal Excel: " + e.message); }
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Laporan Penjualan");
+      XLSX.writeFile(wb, "Laporan_Caloless.xlsx");
+      insertLog("EXPORT", "Unduh Excel");
+    } catch (e: any) { toast.error("Error: " + e.message); }
   };
 
   const exportPDF = () => {
     try {
-      const doc = new jsPDF(); doc.setFontSize(18); doc.text("Laporan Keuangan", 14, 20);
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text("Laporan Keuangan", 14, 20);
       autoTable(doc, {
-        startY: 30, head: [['Tanggal', 'Pemesan', 'Item', 'Total']],
-        body: historyOrders.map(o => [new Date(o.created_at).toLocaleDateString("id-ID"), o.user_name, o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join("\n"), `Rp ${o.total_amount}`])
+        startY: 30,
+        head: [['Tanggal', 'Pemesan', 'Status', 'Total']],
+        body: historyOrders.map(o => [
+          new Date(o.created_at).toLocaleDateString("id-ID"),
+          o.user_name,
+          o.status.toUpperCase(),
+          `Rp ${o.total_amount}`
+        ])
       });
-      doc.save("Laporan_CALOLESS.pdf"); toast.success("PDF diunduh");
+      doc.save("Laporan_CALOLESS.pdf");
+      insertLog("EXPORT", "Unduh PDF");
     } catch (e) { }
   };
 
@@ -273,6 +310,7 @@ export default function AdminDashboard() {
         children: [
           new TableCell({ children: [new Paragraph(new Date(o.created_at).toLocaleDateString("id-ID"))] }),
           new TableCell({ children: [new Paragraph(o.user_name)] }),
+          new TableCell({ children: [new Paragraph(o.status.toUpperCase())] }),
           new TableCell({ children: [new Paragraph(`Rp ${o.total_amount}`)] })
         ]
       }));
@@ -282,167 +320,236 @@ export default function AdminDashboard() {
             children: [
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Tanggal", bold: true })] })] }),
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Pemesan", bold: true })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Status", bold: true })] })] }),
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Total", bold: true })] })] })
             ]
-          }), ...rows]
+          }), ...rows
+        ]
       });
       const doc = new Document({ sections: [{ children: [new Paragraph({ text: "Laporan CALOLESS", heading: HeadingLevel.HEADING_1 }), table] }] });
-      const blob = await Packer.toBlob(doc); saveAs(blob, "Laporan_CALOLESS.docx"); toast.success("Word diunduh");
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, "Laporan_CALOLESS.docx");
+      insertLog("EXPORT", "Unduh Word");
     } catch (e) { }
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-primary">Menyinkronkan Server...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-primary">CALOLESS ERP Loading...</div>;
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 pb-20">
 
-      {/* TOPBAR NAVIGATION */}
+      {/* HEADER NAV */}
       <div className="bg-white dark:bg-zinc-900 border-b p-4 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between items-center gap-4">
-          <h1 className="text-2xl font-extrabold tracking-tight text-primary">CALOLESS <span className="text-zinc-500 font-medium">| Admin Center</span></h1>
-          <div className="flex flex-wrap justify-center gap-2 bg-zinc-100 dark:bg-zinc-800 p-1.5 rounded-xl">
-            <button onClick={() => setActiveTab("orders")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "orders" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><LayoutDashboard className="w-4 h-4" /> Pesanan</button>
-            <button onClick={() => setActiveTab("menu")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "menu" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><Utensils className="w-4 h-4" /> Menu & Gudang</button>
-            <button onClick={() => setActiveTab("analytics")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "analytics" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><BarChart3 className="w-4 h-4" /> Analytics</button>
-            <button onClick={() => setActiveTab("logs")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "logs" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><Activity className="w-4 h-4" /> Logs</button>
-            <button onClick={() => setActiveTab("team")} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeTab === "team" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}><Users className="w-4 h-4" /> Tim</button>
+          <h1 className="text-2xl font-black tracking-tighter text-primary italic">CALOLESS ERP</h1>
+          <div className="flex flex-wrap justify-center gap-2 bg-zinc-100 dark:bg-zinc-800 p-1 rounded-xl">
+            {[
+              { id: 'orders', label: 'Pesanan', icon: Clock },
+              { id: 'menu', label: 'Menu & Stok', icon: Utensils },
+              { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+              { id: 'team', label: 'Tim', icon: Users },
+              { id: 'logs', label: 'Logs', icon: Activity }
+            ].map((tab: any) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === tab.id ? "bg-white text-primary shadow-sm" : "text-muted-foreground"}`}
+              >
+                <tab.icon className="w-4 h-4" /> {tab.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
       <div className="p-6 max-w-7xl mx-auto">
 
-        {/* ================= TAB 1: PESANAN ================= */}
+        {/* ================= TAB 1: ORDERS ================= */}
         {activeTab === "orders" && (
-          <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4">
-            <section className="space-y-4">
-              <div className="flex items-center gap-2 text-orange-600 font-bold"><Clock className="w-5 h-5" /><h2>Pesanan Aktif ({activeOrders.length})</h2></div>
-              <div className="grid gap-4">
-                {activeOrders.map((o) => (
-                  <div key={o.id} className="bg-white border rounded-2xl p-5 shadow-sm flex flex-col md:flex-row justify-between gap-6">
-                    <div className="space-y-2">
-                      <Badge variant={o.status === "paid" ? "default" : "outline"}>{o.status}</Badge>
-                      <h3 className="font-bold text-lg">{o.user_name} <span className="text-sm font-normal text-muted-foreground">({o.customer_phone})</span></h3>
-                      <div className="text-sm space-y-1">{o.items_json?.map((i: any, idx: number) => (<p key={idx} className="flex gap-2"><Package className="w-4 h-4 text-primary" /> {i.quantity}x {i.name}</p>))}</div>
-                      <p className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3 shrink-0" /> {o.address}</p>
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <h2 className="text-2xl font-bold flex items-center gap-2"><Clock className="text-orange-500" /> Pesanan Aktif</h2>
+
+            <div className="grid gap-4">
+              {activeOrders.map((o) => (
+                <div key={o.id} className="bg-white dark:bg-zinc-900 border rounded-2xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
+                  <div className="flex-1">
+                    <div className="mb-2">
+                      {renderStatusBadge(o.status)}
                     </div>
-                    <div className="flex flex-col items-end justify-between gap-4">
-                      <p className="text-xl font-black text-primary">Rp {o.total_amount?.toLocaleString("id-ID")}</p>
-                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="bg-green-600 hover:bg-green-700 text-white gap-2 rounded-full"><CheckCircle2 className="w-4 h-4" /> Pesanan Selesai</Button>
+                    <h3 className="text-xl font-bold">{o.user_name} <span className="text-sm font-normal text-muted-foreground">({o.customer_phone})</span></h3>
+                    <div className="mt-2 space-y-1">
+                      {o.items_json?.map((item: any, i: number) => (
+                        <p key={i} className="text-sm flex items-center gap-2 font-medium">
+                          <Package className="w-4 h-4 text-primary" /> {item.quantity}x {item.name}
+                        </p>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-3 flex items-center gap-1">
+                      <MapPin className="w-3 h-3" /> {o.address}
+                    </p>
+                  </div>
+                  <div className="text-right flex flex-col items-center md:items-end gap-3">
+                    <p className="text-2xl font-black text-primary">Rp {o.total_amount?.toLocaleString()}</p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={() => handleCancelOrder(o.id, o.user_name)} className="rounded-full border-red-200 text-red-500 hover:bg-red-50">
+                        <XCircle className="w-4 h-4 mr-2" /> Batal
+                      </Button>
+                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="rounded-full bg-green-600 hover:bg-green-700 text-white">
+                        <CheckCircle2 className="w-4 h-4 mr-2" /> Selesai
+                      </Button>
                     </div>
                   </div>
-                ))}
-                {activeOrders.length === 0 && <div className="text-center py-10 bg-white border rounded-xl text-muted-foreground">Belum ada pesanan masuk.</div>}
-              </div>
-            </section>
+                </div>
+              ))}
+              {activeOrders.length === 0 && (
+                <div className="text-center py-20 bg-white border border-dashed rounded-2xl text-muted-foreground">
+                  Tidak ada pesanan aktif.
+                </div>
+              )}
+            </div>
 
-            <section className="space-y-4 pt-4 border-t">
-              <div className="flex items-center gap-2 text-zinc-500 font-bold"><History className="w-5 h-5" /><h2>Riwayat Pembelian</h2></div>
-              <div className="overflow-x-auto border rounded-2xl bg-white">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-zinc-50 border-b"><tr><th className="px-6 py-4">Pemesan</th><th className="px-6 py-4">Item & Qty</th><th className="px-6 py-4 text-right">Total Pendapatan</th></tr></thead>
-                  <tbody className="divide-y">
-                    {historyOrders.map((o) => (
-                      <tr key={o.id} className="hover:bg-zinc-50">
-                        <td className="px-6 py-4 font-medium">{o.user_name}</td>
-                        <td className="px-6 py-4 text-xs">{o.items_json?.map((i: any) => `${i.quantity}x ${i.name}`).join(", ")}</td>
-                        <td className="px-6 py-4 text-right font-bold text-primary">Rp {o.total_amount?.toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+            <h2 className="text-2xl font-bold flex items-center gap-2 pt-6 border-t"><History className="text-zinc-500" /> Riwayat Pesanan</h2>
+            <div className="overflow-x-auto border rounded-2xl bg-white">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-zinc-50 border-b">
+                  <tr>
+                    <th className="px-6 py-4">Pemesan</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Waktu</th>
+                    <th className="px-6 py-4 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {historyOrders.map((o) => (
+                    <tr key={o.id} className="hover:bg-zinc-50 transition-colors">
+                      <td className="px-6 py-4 font-bold">{o.user_name}</td>
+                      <td className="px-6 py-4">{renderStatusBadge(o.status)}</td>
+                      <td className="px-6 py-4 text-xs text-muted-foreground">{new Date(o.created_at).toLocaleString('id-ID')}</td>
+                      <td className="px-6 py-4 text-right font-black text-primary">Rp {o.total_amount?.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
-        {/* ================= TAB 2: MENU & GUDANG INVENTORY ================= */}
+        {/* ================= TAB 2: MENU & ERP INVENTORY ================= */}
         {activeTab === "menu" && (
-          <div className="space-y-6 animate-in fade-in">
+          <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex gap-4 border-b">
-              <button onClick={() => setMenuSubTab("catalog")} className={`pb-2 px-4 font-bold transition-all ${menuSubTab === "catalog" ? "border-b-2 border-primary text-primary" : "text-muted-foreground hover:text-foreground"}`}>Katalog Menu</button>
-              <button onClick={() => setMenuSubTab("ingredients")} className={`pb-2 px-4 font-bold transition-all ${menuSubTab === "ingredients" ? "border-b-2 border-primary text-primary" : "text-muted-foreground hover:text-foreground"}`}>Gudang Bahan Baku</button>
+              <button
+                onClick={() => setMenuSubTab("catalog")}
+                className={`pb-2 px-4 font-bold transition-all ${menuSubTab === "catalog" ? "border-b-2 border-primary text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Katalog Menu
+              </button>
+              <button
+                onClick={() => setMenuSubTab("ingredients")}
+                className={`pb-2 px-4 font-bold transition-all ${menuSubTab === "ingredients" ? "border-b-2 border-primary text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Gudang Bahan Baku (Inventory)
+              </button>
             </div>
 
             {menuSubTab === "catalog" ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                {/* FORM CRUD MENU */}
-                <div className="lg:col-span-1 bg-white border rounded-2xl p-6 shadow-sm h-fit space-y-4 border-primary/20 bg-primary/5">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-primary">{isEditingProduct ? "Edit Menu" : "Tambah Menu Baru"}</h3>
-                    {isEditingProduct && <Button variant="ghost" size="icon" onClick={resetProductForm} className="h-6 w-6"><X className="w-4 h-4" /></Button>}
+                {/* FORM EDIT/TAMBAH MENU */}
+                <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-primary/20 shadow-xl h-fit space-y-4">
+                  <div className="flex justify-between items-center border-b pb-3">
+                    <h3 className="font-black text-primary uppercase tracking-wider">{isEditingProduct ? "Edit Menu" : "Tambah Menu"}</h3>
+                    {isEditingProduct && (
+                      <Button variant="ghost" size="icon" onClick={resetProductForm}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
 
-                  <input type="text" placeholder="Nama Menu (cth: Ubi Drink)" value={newProduct.name} onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
-                  <input type="number" placeholder="Harga Jual (Rp)" value={newProduct.price || ""} onChange={(e) => setNewProduct({ ...newProduct, price: parseInt(e.target.value) })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none" />
-                  <textarea placeholder="Deskripsi Singkat" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[60px]" />
+                  <input type="text" placeholder="Nama Menu (cth: Zensum)" value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  <input type="number" placeholder="Harga Jual (Rp)" value={newProduct.price || ""} onChange={e => setNewProduct({ ...newProduct, price: parseInt(e.target.value) })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  <textarea placeholder="Deskripsi Singkat" value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary h-24" />
 
-                  <div className="bg-white p-3 rounded-xl border space-y-3">
-                    <p className="text-xs font-bold text-orange-600">Nutrition & Portion Facts</p>
-                    <input type="text" placeholder="Porsi (1 Gelas 200ml, 3 Biji)" value={newProduct.portion_size} onChange={(e) => setNewProduct({ ...newProduct, portion_size: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-orange-400 outline-none" />
-                    <textarea placeholder="Bahan Utama (Ubi Ungu 50g, Susu 100ml)" value={newProduct.ingredients_text} onChange={(e) => setNewProduct({ ...newProduct, ingredients_text: e.target.value })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-orange-400 outline-none min-h-[80px]" />
+                  <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100 space-y-3">
+                    <p className="text-xs font-bold text-orange-600 flex items-center gap-1 uppercase"><Info className="w-3 h-3" /> Nutrition Setting</p>
+                    <input type="text" placeholder="Porsi (Contoh: 3 Dimsum)" value={newProduct.portion_size} onChange={e => setNewProduct({ ...newProduct, portion_size: e.target.value })} className="w-full bg-white border p-2.5 rounded-lg text-xs" />
+                    <textarea placeholder="Tulis rincian bahan (Untuk info pembeli)" value={newProduct.ingredients_text} onChange={e => setNewProduct({ ...newProduct, ingredients_text: e.target.value })} className="w-full bg-white border p-2.5 rounded-lg text-xs h-16" />
                     <div className="flex items-center gap-2">
-                      <input type="number" placeholder="Total Kalori" value={newProduct.calories || ""} onChange={(e) => setNewProduct({ ...newProduct, calories: parseInt(e.target.value) })} className="w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:ring-orange-400 outline-none" />
+                      <input type="number" placeholder="Total Kalori" value={newProduct.total_calories || ""} onChange={e => setNewProduct({ ...newProduct, total_calories: parseInt(e.target.value) })} className="w-full bg-white border p-2.5 rounded-lg text-xs" />
                       <span className="text-xs font-bold text-muted-foreground">Kkal</span>
                     </div>
                   </div>
 
                   <div className="space-y-2 pt-2 border-t">
-                    <label className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 uppercase"><UploadCloud className="w-3.5 h-3.5" /> Foto Menu</label>
-                    <input type="file" accept="image/*" onChange={handleProductImageUpload} disabled={isUploadingProduct} className="w-full text-xs text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-primary/20 file:text-primary cursor-pointer" />
-                    {newProduct.image_url && <div className="relative w-full h-32 rounded-xl border overflow-hidden mt-2"><Image src={newProduct.image_url} alt="Preview" fill className="object-cover" /></div>}
+                    <label className="text-[10px] font-black text-muted-foreground uppercase flex items-center gap-1"><UploadCloud className="w-3 h-3" /> Foto Menu</label>
+                    <input type="file" accept="image/*" onChange={handleProductUpload} disabled={isUploadingProduct} className="w-full text-xs cursor-pointer file:bg-primary/10 file:text-primary file:border-0 file:rounded-full file:px-4 file:py-2" />
+                    {newProduct.image_url && (
+                      <div className="relative w-full h-32 rounded-xl overflow-hidden mt-2 border-2 border-primary/20">
+                        <Image src={newProduct.image_url} alt="Preview" fill className="object-cover" />
+                      </div>
+                    )}
                   </div>
 
-                  <Button onClick={handleSaveProduct} disabled={isUploadingProduct} className="w-full font-bold shadow-md">
-                    {isEditingProduct ? <><Edit3 className="w-4 h-4 mr-2" /> Perbarui Menu</> : <><Plus className="w-4 h-4 mr-2" /> Simpan Menu</>}
+                  <Button onClick={handleSaveProduct} disabled={isUploadingProduct} className="w-full rounded-xl font-bold py-6 shadow-lg">
+                    {isEditingProduct ? "Update Identitas Menu" : "Simpan Menu Baru"}
                   </Button>
                 </div>
 
-                {/* LIST KATALOG MENU */}
-                <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* CATALOG LIST */}
+                <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
                   {products.map((p) => (
-                    <div key={p.id} className={`bg-white border rounded-2xl p-4 shadow-sm flex flex-col group transition-all ${editProductId === p.id ? 'border-primary ring-2 ring-primary/20' : ''}`}>
-                      <div className="flex gap-3 mb-3">
-                        <div className="relative w-20 h-20 rounded-xl overflow-hidden border bg-zinc-50">
-                          {p.image_url ? <Image src={p.image_url} alt={p.name} fill className="object-cover" /> : <ImageIcon className="w-8 h-8 m-auto text-zinc-300 mt-6" />}
+                    <div key={p.id} className={`group bg-white dark:bg-zinc-900 rounded-3xl border shadow-sm overflow-hidden transition-all hover:shadow-xl ${editProductId === p.id ? 'ring-2 ring-primary border-transparent' : ''}`}>
+
+                      <div className="relative h-56 bg-zinc-100 border-b">
+                        {p.image_url ? (
+                          <Image src={p.image_url} alt={p.name} fill className="object-cover transition-transform group-hover:scale-105" />
+                        ) : (
+                          <ImageIcon className="w-12 h-12 m-auto absolute inset-0 text-zinc-300" />
+                        )}
+
+                        {/* Hover Preview Detail Kalori */}
+                        <div className="absolute inset-0 bg-black/80 text-white p-6 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-center backdrop-blur-md">
+                          <p className="text-xs font-black text-primary uppercase mb-2 flex items-center gap-2"><Info className="w-4 h-4" /> Rincian Kalori (Resep)</p>
+                          <div className="space-y-1.5 overflow-y-auto max-h-32 pr-2 custom-scrollbar">
+                            {p.product_ingredients?.map((ri: any, i: number) => (
+                              <div key={i} className="flex justify-between items-center text-[11px] border-b border-white/10 pb-1">
+                                <span className="flex items-center gap-1.5"><UtensilsCrossed className="w-3 h-3 text-primary" /> {ri.ingredients?.name} ({ri.amount_needed}{ri.ingredients?.unit})</span>
+                                <span className="font-bold">{(ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0)} kkal</span>
+                              </div>
+                            ))}
+                            {p.product_ingredients?.length === 0 && <p className="text-[10px] italic text-zinc-400">Hubungkan resep di Database SQL.</p>}
+                          </div>
+                          <div className="mt-auto pt-3 border-t border-white/20 flex justify-between items-center">
+                            <span className="text-xs font-medium">Total Manual</span>
+                            <span className="text-2xl font-black text-primary">{p.total_calories} <span className="text-xs text-white">Kkal</span></span>
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <div className="flex justify-between items-start">
-                            <h4 className="font-bold leading-tight line-clamp-2">{p.name}</h4>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => startEditProduct(p)} className="text-blue-500 p-1 hover:bg-blue-50 rounded"><Edit3 className="w-3.5 h-3.5" /></button>
-                              <button onClick={() => handleDeleteProduct(p.id, p.name)} className="text-red-500 p-1 hover:bg-red-50 rounded"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+
+                      <div className="p-5 flex flex-col flex-1">
+                        <div className="flex justify-between items-start mb-1">
+                          <h4 className="text-lg font-black leading-tight text-zinc-800">{p.name}</h4>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => startEditProduct(p)} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"><Edit3 className="w-4 h-4" /></button>
+                            <button onClick={async () => { if (confirm("Hapus menu?")) { await supabase.from("products").delete().eq("id", p.id); fetchData(); } }} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-2 mb-4 h-8">{p.description}</p>
+
+                        <div className="grid grid-cols-2 gap-3 mt-auto">
+                          <div className="bg-zinc-50 p-3 rounded-2xl border text-center">
+                            <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Harga Jual</p>
+                            <p className="text-lg font-black text-primary italic">Rp {p.price?.toLocaleString()}</p>
+                          </div>
+                          <div className="bg-orange-50 p-3 rounded-2xl border border-orange-100 text-center">
+                            <p className="text-[10px] font-bold text-orange-600 uppercase mb-1">Stok Porsi</p>
+                            <div className="flex items-center justify-between px-1">
+                              <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, -1)} className="font-black text-orange-600 text-xl hover:scale-110">-</button>
+                              <span className="font-black text-xl">{p.stock}</span>
+                              <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, 1)} className="font-black text-orange-600 text-xl hover:scale-110">+</button>
                             </div>
                           </div>
-                          <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{p.description}</p>
-                          <Badge variant="secondary" className="mt-1 text-[9px] bg-orange-100 text-orange-700">{p.calories || 0} Kkal</Badge>
                         </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 mt-auto pt-3 border-t">
-                        <div className="bg-zinc-50 p-2 rounded-lg text-center">
-                          <p className="text-[9px] text-muted-foreground mb-1">Harga Jual</p>
-                          <p className="font-bold text-primary text-sm">Rp {p.price.toLocaleString()}</p>
-                        </div>
-                        <div className="bg-orange-50 p-2 rounded-lg text-center border border-orange-100">
-                          <p className="text-[9px] text-orange-600 mb-1">Stok Porsi Menu</p>
-                          <div className="flex items-center justify-between px-1">
-                            <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, -1)} className="text-orange-600 font-bold">-</button>
-                            <span className="font-black text-sm">{p.stock ?? 100}</span>
-                            <button onClick={() => updateProductStockOnly(p.id, p.name, p.stock ?? 100, 1)} className="text-orange-600 font-bold">+</button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 border-t pt-2">
-                        <p className="text-[10px] font-bold uppercase text-primary mb-1">Resep Terhubung (Gudang):</p>
-                        {p.product_ingredients?.length > 0 ? p.product_ingredients.map((ri: any) => (
-                          <div key={ri.id} className="text-[10px] flex justify-between text-muted-foreground">
-                            <span>{ri.ingredients?.name}</span>
-                            <span>{ri.amount_needed} {ri.ingredients?.unit}/porsi</span>
-                          </div>
-                        )) : <p className="text-[10px] text-orange-500 italic">Belum disetting di Database Admin.</p>}
                       </div>
                     </div>
                   ))}
@@ -450,29 +557,32 @@ export default function AdminDashboard() {
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-                {/* FORM INPUT BAHAN BAKU */}
-                <div className="bg-white p-6 rounded-2xl border shadow-sm h-fit space-y-4">
-                  <h3 className="font-bold flex items-center gap-2"><Database className="w-4 h-4" /> Input Bahan Baru</h3>
-                  <input type="text" placeholder="Nama Bahan (cth: Matcha)" value={newIng.name} onChange={e => setNewIng({ ...newIng, name: e.target.value })} className="w-full border p-2 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary" />
-                  <input type="text" placeholder="Satuan (gram / ml / pcs)" value={newIng.unit} onChange={e => setNewIng({ ...newIng, unit: e.target.value })} className="w-full border p-2 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary" />
-                  <input type="number" placeholder="Stok Awal" value={newIng.stock_quantity || ""} onChange={e => setNewIng({ ...newIng, stock_quantity: parseFloat(e.target.value) })} className="w-full border p-2 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary" />
-                  <Button onClick={handleAddIngredient} className="w-full">Simpan ke Gudang</Button>
+                {/* GUDANG BAHAN BAKU FORM */}
+                <div className="bg-white p-6 rounded-3xl border shadow-lg h-fit space-y-4">
+                  <h3 className="font-black text-primary flex items-center gap-2 uppercase"><Database className="w-5 h-5" /> Input Gudang</h3>
+                  <input type="text" placeholder="Nama Bahan (Misal: Dada Ayam)" value={newIng.name} onChange={e => setNewIng({ ...newIng, name: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="text" placeholder="Satuan (gr/ml)" value={newIng.unit} onChange={e => setNewIng({ ...newIng, unit: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                    <input type="number" placeholder="Kalori/Unit" value={newIng.calories_per_unit || ""} onChange={e => setNewIng({ ...newIng, calories_per_unit: parseFloat(e.target.value) })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  </div>
+                  <input type="number" placeholder="Stok Awal" value={newIng.stock_quantity || ""} onChange={e => setNewIng({ ...newIng, stock_quantity: parseFloat(e.target.value) })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                  <Button onClick={handleAddIngredient} className="w-full py-6 rounded-xl font-bold">Simpan ke Inventaris</Button>
                 </div>
 
-                {/* LIST STOK GUDANG */}
+                {/* GUDANG LIST */}
                 <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {ingredients.map(ing => (
                     <div key={ing.id} className="bg-white p-5 rounded-2xl border shadow-sm flex justify-between items-center hover:border-primary/50 transition-colors">
                       <div>
-                        <p className="font-bold text-sm">{ing.name}</p>
-                        <p className={`text-2xl font-black ${ing.stock_quantity < 100 ? 'text-red-500' : 'text-primary'}`}>
-                          {ing.stock_quantity} <span className="text-xs font-normal text-muted-foreground">{ing.unit}</span>
+                        <p className="font-black text-zinc-700 text-sm uppercase">{ing.name}</p>
+                        <p className={`text-2xl font-black ${ing.stock_quantity < 500 ? 'text-red-500' : 'text-primary'}`}>
+                          {ing.stock_quantity.toLocaleString()} <span className="text-xs font-medium text-muted-foreground uppercase">{ing.unit}</span>
                         </p>
+                        <p className="text-[10px] text-muted-foreground font-bold">{ing.calories_per_unit} Kkal / {ing.unit}</p>
                       </div>
                       <div className="flex flex-col gap-1">
-                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, 100)} className="h-7 text-xs">+100</Button>
-                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, -100)} className="h-7 text-xs">-100</Button>
+                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, 100)} className="h-8 text-xs font-bold">+100</Button>
+                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, -100)} className="h-8 text-xs font-bold">-100</Button>
                       </div>
                     </div>
                   ))}
@@ -485,37 +595,36 @@ export default function AdminDashboard() {
 
         {/* ================= TAB 3: ANALYTICS & EXPORT ================= */}
         {activeTab === "analytics" && (
-          <div className="space-y-8 animate-in fade-in">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <h2 className="text-2xl font-bold">Analisa Performa</h2>
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Laporan Performa</h2>
               <div className="flex gap-2">
-                <Button onClick={exportPDF} variant="outline" className="gap-2 border-red-200 text-red-600 hover:bg-red-50"><FileText className="w-4 h-4" /> PDF</Button>
-                <Button onClick={exportExcel} variant="outline" className="gap-2 border-green-200 text-green-600 hover:bg-green-50"><FileSpreadsheet className="w-4 h-4" /> Excel</Button>
-                <Button onClick={exportWord} variant="outline" className="gap-2 border-blue-200 text-blue-600 hover:bg-blue-50"><File className="w-4 h-4" /> Word</Button>
+                <Button variant="outline" onClick={exportPDF} className="gap-2 rounded-xl text-red-600 border-red-200 hover:bg-red-50"><FileText className="w-4 h-4" /> PDF</Button>
+                <Button variant="outline" onClick={exportExcel} className="gap-2 rounded-xl border-green-200 text-green-600 hover:bg-green-50"><FileSpreadsheet className="w-4 h-4" /> Excel</Button>
+                <Button variant="outline" onClick={exportWord} className="gap-2 rounded-xl border-blue-200 text-blue-600 hover:bg-blue-50"><File className="w-4 h-4" /> Word</Button>
               </div>
             </div>
-
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-white border rounded-2xl p-6 shadow-sm h-80">
-                <h3 className="font-bold mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-primary" /> Tren Pendapatan</h3>
+              <div className="bg-white p-6 rounded-3xl border shadow-sm h-80">
+                <h3 className="font-bold mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" /> Tren Penjualan</h3>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={dailyRevenueData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="date" />
-                    <YAxis tickFormatter={(val) => `${val / 1000}k`} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                    <YAxis tickFormatter={(val) => `${val / 1000}k`} tick={{ fontSize: 10 }} />
                     <Tooltip formatter={(value: any) => `Rp ${Number(value).toLocaleString("id-ID")}`} />
-                    <Line type="monotone" dataKey="Pendapatan" stroke="#8b5cf6" strokeWidth={3} dot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="Pendapatan" stroke="#8b5cf6" strokeWidth={4} dot={{ r: 4 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
 
-              <div className="bg-white border rounded-2xl p-6 shadow-sm h-80">
-                <h3 className="font-bold mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-orange-500" /> Item Terlaris (Biji)</h3>
+              <div className="bg-white p-6 rounded-3xl border shadow-sm h-80">
+                <h3 className="font-bold mb-4 flex items-center gap-2"><Package className="w-4 h-4 text-orange-500" /> Item Terlaris (Biji)</h3>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={itemSoldData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" />
-                    <YAxis />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} />
                     <Tooltip />
                     <Bar dataKey="Terjual" fill="#f97316" radius={[4, 4, 0, 0]} />
                   </BarChart>
@@ -572,7 +681,7 @@ export default function AdminDashboard() {
 
                 <div className="space-y-2 pt-2 border-t">
                   <label className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 uppercase tracking-wider"><UploadCloud className="w-3.5 h-3.5" /> Ganti Foto Profil</label>
-                  <input type="file" accept="image/*" onChange={handleTeamImageUpload} disabled={isUploadingTeam} className="w-full text-xs text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-primary/20 file:text-primary cursor-pointer" />
+                  <input type="file" accept="image/*" onChange={handleTeamUpload} disabled={isUploadingTeam} className="w-full text-xs text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-primary/20 file:text-primary cursor-pointer" />
                   {newMember.photo_url && (
                     <div className="relative w-16 h-16 rounded-full border-2 border-primary/30 overflow-hidden mt-2">
                       <Image src={newMember.photo_url} alt="Preview" fill className="object-cover" />
