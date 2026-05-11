@@ -34,13 +34,13 @@ export default function AdminDashboard() {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // States for CRUD Team
+  // States CRUD Team
   const [newMember, setNewMember] = useState({ name: "", role: "", photo_url: "", order_priority: 5 });
   const [isEditingTeam, setIsEditingTeam] = useState(false);
   const [editTeamId, setEditTeamId] = useState<string | null>(null);
   const [isUploadingTeam, setIsUploadingTeam] = useState(false);
 
-  // States for CRUD Product (Menu) - KOTAK INPUT KALORI DIHAPUS, MURNI OTOMATIS
+  // States CRUD Menu
   const [newProduct, setNewProduct] = useState({
     name: "", price: 0, stock: 0, description: "",
     portion_size: "", ingredients_text: "", image_url: ""
@@ -49,8 +49,10 @@ export default function AdminDashboard() {
   const [editProductId, setEditProductId] = useState<string | null>(null);
   const [isUploadingProduct, setIsUploadingProduct] = useState(false);
 
-  // States for CRUD Ingredients (Gudang)
+  // States CRUD Ingredients (Gudang) - BARU: FITUR EDIT
   const [newIng, setNewIng] = useState({ name: "", unit: "", stock_quantity: 0, calories_per_unit: 0 });
+  const [isEditingIng, setIsEditingIng] = useState(false);
+  const [editIngId, setEditIngId] = useState<string | null>(null);
 
   const supabase = createClient();
 
@@ -85,7 +87,6 @@ export default function AdminDashboard() {
     await supabase.from("activity_logs").insert({ action_type: type, description: desc });
   };
 
-  // --- FUNGSI SUPER PINTAR: AUTO CALCULATE KALORI DARI DATABASE ---
   const calculateAutoTotal = (recipe: any[]) => {
     if (!recipe || recipe.length === 0) return 0;
     return recipe.reduce((sum, item) => sum + (item.amount_needed * (item.ingredients?.calories_per_unit || 0)), 0).toFixed(0);
@@ -157,7 +158,6 @@ export default function AdminDashboard() {
 
   const handleSaveProduct = async () => {
     if (!newProduct.name || newProduct.price <= 0) return toast.error("Nama & Harga valid wajib diisi!");
-
     if (isEditingProduct && editProductId) {
       await supabase.from("products").update(newProduct).eq("id", editProductId);
       toast.success("Menu diupdate!");
@@ -189,29 +189,56 @@ export default function AdminDashboard() {
 
   const handleDeleteProduct = async (id: string, name: string) => {
     if (!confirm(`Hapus menu ${name}?`)) return;
-    const { error } = await supabase.from("products").delete().eq("id", id);
-    if (!error) { toast.success("Menu dihapus."); insertLog("HAPUS_MENU", `Hapus menu: ${name}`); }
+    await supabase.from("products").delete().eq("id", id);
+    toast.success("Menu dihapus."); insertLog("HAPUS_MENU", `Hapus menu: ${name}`);
   };
 
   const updateProductStockOnly = async (id: string, name: string, curr: number, change: number) => {
     const newStock = Math.max(0, curr + change);
-    const { error } = await supabase.from("products").update({ stock: newStock }).eq("id", id);
-    if (!error) { setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p)); insertLog("UPDATE_STOK", `Stok ${name} jadi ${newStock}`); }
+    await supabase.from("products").update({ stock: newStock }).eq("id", id);
+    insertLog("UPDATE_STOK", `Stok ${name} jadi ${newStock}`);
   };
 
-  // --- INGREDIENT LOGIC ---
-  const handleAddIngredient = async () => {
+  // --- INGREDIENT LOGIC (DIPERBARUI) ---
+  const handleSaveIngredient = async () => {
     if (!newIng.name || !newIng.unit) return toast.error("Nama & Satuan wajib diisi!");
-    await supabase.from("ingredients").insert([newIng]);
-    toast.success("Bahan baku masuk gudang!");
-    insertLog("TAMBAH_GUDANG", `Menambah bahan baku ${newIng.name}`);
-    setNewIng({ name: "", unit: "", stock_quantity: 0, calories_per_unit: 0 });
+
+    if (isEditingIng && editIngId) {
+      await supabase.from("ingredients").update(newIng).eq("id", editIngId);
+      toast.success("Inventaris diperbarui!");
+      insertLog("UPDATE_GUDANG", `Update bahan baku ${newIng.name}`);
+    } else {
+      await supabase.from("ingredients").insert([newIng]);
+      toast.success("Bahan baku masuk gudang!");
+      insertLog("TAMBAH_GUDANG", `Menambah bahan baku ${newIng.name}`);
+    }
+    resetIngForm();
+    fetchData(); // Refresh UI instantly
   };
 
-  const updateIngStock = async (id: string, curr: number, change: number) => {
-    const newStock = Math.max(0, curr + change);
-    await supabase.from("ingredients").update({ stock_quantity: newStock }).eq("id", id);
+  const resetIngForm = () => {
+    setNewIng({ name: "", unit: "", stock_quantity: 0, calories_per_unit: 0 });
+    setIsEditingIng(false);
+    setEditIngId(null);
   };
+
+  const startEditIng = (ing: any) => {
+    setNewIng({
+      name: ing.name, unit: ing.unit, stock_quantity: ing.stock_quantity, calories_per_unit: ing.calories_per_unit
+    });
+    setIsEditingIng(true);
+    setEditIngId(ing.id);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDeleteIngredient = async (id: string, name: string) => {
+    if (!confirm(`Hapus bahan baku ${name} dari gudang?`)) return;
+    await supabase.from("ingredients").delete().eq("id", id);
+    toast.success("Bahan baku dihapus.");
+    insertLog("HAPUS_GUDANG", `Hapus bahan baku ${name}`);
+    fetchData();
+  };
+
 
   // --- TEAM LOGIC ---
   const handleTeamUpload = async (e: any) => {
@@ -458,7 +485,7 @@ export default function AdminDashboard() {
             {menuSubTab === "catalog" ? (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                {/* FORM EDIT/TAMBAH MENU (TANPA INPUT TOTAL KALORI MANUAL) */}
+                {/* FORM EDIT/TAMBAH MENU */}
                 <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-primary/20 shadow-xl h-fit space-y-4">
                   <div className="flex justify-between items-center border-b pb-3">
                     <h3 className="font-black text-primary uppercase tracking-wider">{isEditingProduct ? "Edit Menu" : "Tambah Menu"}</h3>
@@ -495,7 +522,7 @@ export default function AdminDashboard() {
                   </Button>
                 </div>
 
-                {/* CATALOG LIST (TAMPILAN AUTO CALCULATE) */}
+                {/* CATALOG LIST */}
                 <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
                   {products.map((p) => {
                     const autoTotalKcal = calculateAutoTotal(p.product_ingredients);
@@ -509,7 +536,7 @@ export default function AdminDashboard() {
                             <ImageIcon className="w-12 h-12 m-auto absolute inset-0 text-zinc-300" />
                           )}
 
-                          {/* Hover Preview Detail Kalori Auto-Calculate */}
+                          {/* Hover Preview Detail Kalori */}
                           <div className="absolute inset-0 bg-black/80 text-white p-6 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-center backdrop-blur-md">
                             <p className="text-xs font-black text-primary uppercase mb-2 flex items-center gap-2"><Info className="w-4 h-4" /> Rincian Kalori (Resep)</p>
                             <div className="space-y-1.5 overflow-y-auto max-h-32 pr-2 custom-scrollbar">
@@ -519,7 +546,7 @@ export default function AdminDashboard() {
                                   <span className="font-bold">{(ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0)} kkal</span>
                                 </div>
                               ))}
-                              {p.product_ingredients?.length === 0 && <p className="text-[10px] italic text-zinc-400">Belum ada resep SQL.</p>}
+                              {p.product_ingredients?.length === 0 && <p className="text-[10px] italic text-zinc-400">Hubungkan resep di Database SQL.</p>}
                             </div>
                             <div className="mt-auto pt-3 border-t border-white/20 flex justify-between items-center">
                               <span className="text-xs font-medium uppercase tracking-widest text-primary">Sistem Auto Total</span>
@@ -560,32 +587,50 @@ export default function AdminDashboard() {
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* GUDANG BAHAN BAKU FORM */}
-                <div className="bg-white p-6 rounded-3xl border shadow-lg h-fit space-y-4">
-                  <h3 className="font-black text-primary flex items-center gap-2 uppercase"><Database className="w-5 h-5" /> Input Gudang</h3>
+
+                {/* GUDANG BAHAN BAKU FORM (UPDATE: BISA TAMBAH / EDIT) */}
+                <div className="bg-white p-6 rounded-3xl border shadow-lg h-fit space-y-4 border-primary/20 bg-primary/5">
+                  <div className="flex justify-between items-center border-b pb-3">
+                    <h3 className="font-black text-primary uppercase tracking-wider">{isEditingIng ? "Edit Gudang" : "Input Gudang"}</h3>
+                    {isEditingIng && (
+                      <Button variant="ghost" size="icon" onClick={resetIngForm}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                   <input type="text" placeholder="Nama Bahan (Misal: Dada Ayam)" value={newIng.name} onChange={e => setNewIng({ ...newIng, name: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
                   <div className="grid grid-cols-2 gap-2">
-                    <input type="text" placeholder="Satuan (gr/ml)" value={newIng.unit} onChange={e => setNewIng({ ...newIng, unit: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
-                    <input type="number" placeholder="Kalori/Unit" value={newIng.calories_per_unit || ""} onChange={e => setNewIng({ ...newIng, calories_per_unit: parseFloat(e.target.value) })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                    <input type="text" placeholder="Satuan (gr/ml/pcs)" value={newIng.unit} onChange={e => setNewIng({ ...newIng, unit: e.target.value })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+                    <input type="number" placeholder="Kalori per Unit" value={newIng.calories_per_unit || ""} onChange={e => setNewIng({ ...newIng, calories_per_unit: parseFloat(e.target.value) })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
                   </div>
-                  <input type="number" placeholder="Stok Awal" value={newIng.stock_quantity || ""} onChange={e => setNewIng({ ...newIng, stock_quantity: parseFloat(e.target.value) })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
-                  <Button onClick={handleAddIngredient} className="w-full py-6 rounded-xl font-bold">Simpan ke Inventaris</Button>
+                  <input type="number" placeholder="Stok Aktual" value={newIng.stock_quantity || ""} onChange={e => setNewIng({ ...newIng, stock_quantity: parseFloat(e.target.value) })} className="w-full bg-zinc-50 border p-3 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary" />
+
+                  <Button onClick={handleSaveIngredient} className="w-full py-6 rounded-xl font-bold shadow-md">
+                    {isEditingIng ? "Perbarui Inventaris" : "Simpan ke Inventaris"}
+                  </Button>
                 </div>
 
-                {/* GUDANG LIST */}
+                {/* GUDANG LIST (UPDATE: ADA TOMBOL EDIT & DELETE, TOMBOL +100/-100 DIHAPUS) */}
                 <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {ingredients.map(ing => (
-                    <div key={ing.id} className="bg-white p-5 rounded-2xl border shadow-sm flex justify-between items-center hover:border-primary/50 transition-colors">
-                      <div>
+                    <div key={ing.id} className={`bg-white p-5 rounded-2xl border shadow-sm flex flex-col hover:border-primary/50 transition-all group ${editIngId === ing.id ? 'ring-2 ring-primary border-transparent' : ''}`}>
+                      <div className="flex justify-between items-start mb-2">
                         <p className="font-black text-zinc-700 text-sm uppercase">{ing.name}</p>
-                        <p className={`text-2xl font-black ${ing.stock_quantity < 500 ? 'text-red-500' : 'text-primary'}`}>
-                          {ing.stock_quantity.toLocaleString()} <span className="text-xs font-medium text-muted-foreground uppercase">{ing.unit}</span>
-                        </p>
-                        <p className="text-[10px] text-muted-foreground font-bold">{ing.calories_per_unit} Kkal / {ing.unit}</p>
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => startEditIng(ing)} className="p-1.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"><Edit3 className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => handleDeleteIngredient(ing.id, ing.name)} className="p-1.5 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
                       </div>
-                      <div className="flex flex-col gap-1">
-                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, 100)} className="h-8 text-xs font-bold">+100</Button>
-                        <Button variant="outline" size="sm" onClick={() => updateIngStock(ing.id, ing.stock_quantity, -100)} className="h-8 text-xs font-bold">-100</Button>
+
+                      <div className="flex items-end justify-between mt-auto">
+                        <div>
+                          <p className={`text-2xl font-black ${ing.stock_quantity < 500 ? 'text-red-500' : 'text-primary'}`}>
+                            {ing.stock_quantity.toLocaleString()} <span className="text-xs font-medium text-muted-foreground uppercase">{ing.unit}</span>
+                          </p>
+                          <p className="text-[10px] text-muted-foreground font-bold mt-1 bg-zinc-100 px-2 py-0.5 rounded inline-block">
+                            {ing.calories_per_unit} Kkal / {ing.unit}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   ))}
