@@ -16,7 +16,7 @@ export function Footer() {
               Inovasi kuliner rendah kalori berbasis kimia pangan. Camilan guilt-free untuk gaya hidup sehatmu.
             </p>
           </div>
-          
+
           <div>
             <h4 className="text-white font-semibold mb-4">Pintasan</h4>
             <ul className="space-y-2 text-sm">
@@ -26,7 +26,7 @@ export function Footer() {
               <li><Link href="#tim" className="hover:text-primary transition-colors">Tentang Tim</Link></li>
             </ul>
           </div>
-          
+
           <div>
             <h4 className="text-white font-semibold mb-4">Kontak Kami</h4>
             <ul className="space-y-3 text-sm">
@@ -36,7 +36,7 @@ export function Footer() {
               </li>
               <li className="flex items-center gap-3">
                 <Phone className="w-5 h-5 text-primary shrink-0" />
-                <span>+62 812-3456-7890</span>
+                <span>+62 838-6260-8826</span>
               </li>
               <li className="flex items-center gap-3">
                 <Mail className="w-5 h-5 text-primary shrink-0" />
@@ -44,7 +44,7 @@ export function Footer() {
               </li>
             </ul>
           </div>
-          
+
           <div>
             <h4 className="text-white font-semibold mb-4">Ikuti Kami</h4>
             <div className="flex gap-4">
@@ -54,6 +54,7 @@ export function Footer() {
                   <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
                   <line x1="17.5" x2="17.51" y1="6.5" y2="6.5" />
                 </svg>
+                <span>calolesss</span>
               </a>
               {/* Add more social icons as needed */}
             </div>
@@ -62,7 +63,7 @@ export function Footer() {
             </p>
           </div>
         </div>
-        
+
         <div className="border-t border-zinc-800 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-zinc-500">
           <p>© {new Date().getFullYear()} Caloless. All rights reserved.</p>
           <div className="flex gap-4">
