@@ -62,7 +62,7 @@ export function ProductCard({ product }: { product: any }) {
             <Info className="w-5 h-5" /> NUTRITION FACTS
           </h5>
 
-          <div className="overflow-y-auto flex-1 pr-2 custom-scrollbar space-y-2">
+          <div className="overflow-y-auto flex-1 pr-1 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
             {recipeData.length > 0 ? (
               recipeData.map((ri: any, i: number) => {
                 const cal = (ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0);

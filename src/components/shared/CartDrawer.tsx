@@ -3,8 +3,7 @@
 import { useCartStore } from "@/store/useCartStore";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, Minus, Plus, Trash2, MapPin, Store, Truck, Map, Navigation } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ShoppingCart, Minus, Plus, Trash2, Store, Truck, Map, Navigation } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import Image from "next/image";
 import { useState, useEffect } from "react";
@@ -187,7 +186,9 @@ export function CartDrawer() {
     <>
       <Script src="https://app.midtrans.com/snap/snap.js" data-client-key={process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY} strategy="lazyOnload" />
       <Sheet>
-        <SheetTrigger render={<Button variant="ghost" size="icon" className="relative cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full w-10 h-10 transition-colors" />}>
+
+        {/* PERBAIKAN 1: SheetTrigger langsung diberi styling tombol tanpa menggunakan <Button asChild> */}
+        <SheetTrigger className="relative flex items-center justify-center cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full w-10 h-10 transition-colors focus:outline-none">
           <ShoppingCart className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
           {getTotalItems() > 0 && (
             <span className="absolute top-0 right-0 bg-primary text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center translate-x-1/4 -translate-y-1/4 border-2 border-white">
@@ -195,12 +196,16 @@ export function CartDrawer() {
             </span>
           )}
         </SheetTrigger>
-        <SheetContent className="w-full sm:max-w-md flex flex-col p-0">
-          <SheetHeader className="p-4 border-b shrink-0">
+
+        {/* PERBAIKAN 2: Menggunakan h-[100dvh] dan overflow-hidden agar terhindar dari bug viewport Chrome */}
+        <SheetContent className="w-full sm:max-w-md flex flex-col p-0 h-[100dvh] max-h-screen overflow-hidden bg-white dark:bg-zinc-950">
+
+          <SheetHeader className="p-4 border-b shrink-0 bg-white dark:bg-zinc-950 z-10">
             <SheetTitle className="text-xl font-bold">Keranjang & Checkout</SheetTitle>
           </SheetHeader>
 
-          <ScrollArea className="flex-1 px-4 py-2 custom-scrollbar">
+          {/* PERBAIKAN 3: ScrollArea dibuang, diganti div dengan flex-1 overflow-y-auto */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 hide-scrollbar [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
             {items.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
                 <ShoppingCart className="w-12 h-12 mb-2 opacity-20" />
@@ -208,6 +213,7 @@ export function CartDrawer() {
               </div>
             ) : (
               <div className="space-y-6 pb-6">
+
                 {/* 1. DAFTAR PESANAN */}
                 <div className="space-y-4">
                   {items.map((item) => (
@@ -222,9 +228,13 @@ export function CartDrawer() {
                         </div>
                         <div className="flex items-center justify-between mt-2">
                           <div className="flex items-center border rounded-lg bg-secondary/30">
-                            <button className="h-7 w-7 flex justify-center items-center" onClick={() => updateQuantity(item.id, item.quantity - 1)}><Minus className="w-3 h-3" /></button>
+                            <button className="h-7 w-7 flex justify-center items-center" onClick={() => updateQuantity(item.id, item.quantity - 1)}>
+                              <Minus className="w-3 h-3" />
+                            </button>
                             <span className="w-6 text-center text-xs font-semibold">{item.quantity}</span>
-                            <button className="h-7 w-7 flex justify-center items-center" onClick={() => updateQuantity(item.id, item.quantity + 1)}><Plus className="w-3 h-3" /></button>
+                            <button className="h-7 w-7 flex justify-center items-center" onClick={() => updateQuantity(item.id, item.quantity + 1)}>
+                              <Plus className="w-3 h-3" />
+                            </button>
                           </div>
                           <button className="text-red-500 hover:bg-red-50 p-1.5 rounded-md" onClick={() => removeItem(item.id)}>
                             <Trash2 className="w-4 h-4" />
@@ -282,7 +292,6 @@ export function CartDrawer() {
                   {deliveryType === "delivery" && (
                     <div className="bg-secondary/20 p-3 rounded-xl border border-border mt-3 space-y-3">
 
-                      {/* TOMBOL GPS SAKTI */}
                       <Button
                         size="sm"
                         variant="default"
@@ -330,11 +339,11 @@ export function CartDrawer() {
                 </div>
               </div>
             )}
-          </ScrollArea>
+          </div>
 
-          {/* 4. TOTAL & CHECKOUT BUTTON */}
+          {/* 4. TOTAL & CHECKOUT BUTTON (PERBAIKAN: shrink-0 agar tidak terdorong) */}
           {items.length > 0 && (
-            <div className="p-5 border-t bg-secondary/10 shrink-0">
+            <div className="p-5 border-t bg-white dark:bg-zinc-950 shrink-0 z-10 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
               <div className="space-y-2 text-sm mb-4">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Subtotal Pesanan</span>
