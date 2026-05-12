@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Utensils, Users, BarChart3,
   Activity, FileText, FileSpreadsheet, File,
   Trash2, Plus, UploadCloud, Edit3, X, Database, Image as ImageIcon,
-  Info, UtensilsCrossed, XCircle, Calculator
+  Info, UtensilsCrossed, XCircle, Calculator, Truck
 } from "lucide-react";
 import { toast } from "sonner";
 import {
