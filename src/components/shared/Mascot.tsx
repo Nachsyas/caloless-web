@@ -9,7 +9,7 @@ export function Mascot() {
     const [isHovered, setIsHovered] = useState(false);
     const [isWelcomeOpen, setIsWelcomeOpen] = useState(false);
 
-    // Hook audio (suara tetap jalan!)
+    // Hook audio (pastikan file hello.mp3 ada di public/sounds/)
     const [playMascotSound] = useSound("/sounds/hello.mp3");
 
     // EFEK SAMBUTAN OTOMATIS
@@ -42,7 +42,7 @@ export function Mascot() {
             onMouseLeave={() => setIsHovered(false)}
             onClick={handleMascotClick}
         >
-            {/* CSS Animasi Mengambang (Melayang naik-turun halus) */}
+            {/* CSS Animasi Mengambang */}
             <style dangerouslySetInnerHTML={{
                 __html: `
               @keyframes float {
@@ -62,12 +62,22 @@ export function Mascot() {
                 </div>
             )}
 
-            {/* MASKOT NATIVE (100% Gratis, Tidak butuh Lottie, Loading Instan) */}
-            {/* Kamu bisa ganti emoji 🥗 dengan emoji lain seperti 👩‍🍳, 🥟, atau 🍠 */}
-            <div className="w-20 h-20 bg-white/90 backdrop-blur-sm rounded-full shadow-2xl border-4 border-primary flex items-center justify-center animate-float hover:rotate-12 transition-all duration-300">
+            {/* MASKOT PEREMPUAN BERKERUDUNG */}
+            <div className="w-20 h-20 bg-primary/10 backdrop-blur-sm rounded-full shadow-2xl border-4 border-primary flex items-center justify-center animate-float hover:rotate-12 transition-all duration-300 overflow-hidden">
+
+                {/* OPSI 1: Pakai Emoji (Sementara)
+                  Jika kamu belum punya file gambarnya, pakai ini dulu.
+                */}
                 <span className="text-5xl select-none" style={{ filter: "drop-shadow(0px 4px 4px rgba(0,0,0,0.1))" }}>
-                    🥗
+                    🧕
                 </span>
+
+                {/* OPSI 2: Pakai Gambar Desain Aslimu
+                  Jika kamu punya file gambar maskotnya (misal: "maskot-cewek.png" di dalam folder public),
+                  HAPUS tag <span> emoji di atas, lalu HAPUS TANDA KOMENTAR pada tag <img /> di bawah ini:
+                */}
+                {/* <img src="/maskot-cewek.png" alt="Maskot CALOLESS" className="w-full h-full object-cover" /> */}
+
             </div>
         </div>
     );
