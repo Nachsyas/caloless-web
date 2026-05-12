@@ -303,9 +303,12 @@ export function CartDrawer() {
                         {isCheckingLocation ? "Memindai Satelit..." : "📍 Lacak Lokasi Saya Otomatis (GPS)"}
                       </Button>
 
-                      <div className="relative">
-                        <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-                        <div className="relative flex justify-center text-xs uppercase"><span className="bg-secondary/20 px-2 text-muted-foreground">atau tulis alamat detail</span></div>
+                      <div className="flex items-center gap-3 py-1">
+                        <div className="flex-1 h-px bg-border/50"></div>
+                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                          atau tulis alamat detail
+                        </span>
+                        <div className="flex-1 h-px bg-border/50"></div>
                       </div>
 
                       <textarea
