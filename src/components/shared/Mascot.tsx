@@ -9,10 +9,10 @@ export function Mascot() {
     const [isHovered, setIsHovered] = useState(false);
     const [isWelcomeOpen, setIsWelcomeOpen] = useState(false);
 
-    // Hook audio (pastikan file hello.mp3 ada di public/sounds/)
+    // Hook audio (Pastikan file hello.mp3 ada di public/sounds/)
     const [playMascotSound] = useSound("/sounds/hello.mp3");
 
-    // EFEK SAMBUTAN OTOMATIS
+    // EFEK SAMBUTAN OTOMATIS SAAT WEB DIBUKA
     useEffect(() => {
         const timer = setTimeout(() => {
             setIsWelcomeOpen(true);
@@ -42,16 +42,16 @@ export function Mascot() {
             onMouseLeave={() => setIsHovered(false)}
             onClick={handleMascotClick}
         >
-            {/* CSS Animasi Mengambang */}
+            {/* CSS Animasi Mengambang (Floating Effect) */}
             <style dangerouslySetInnerHTML={{
                 __html: `
               @keyframes float {
                 0% { transform: translateY(0px); }
-                50% { transform: translateY(-12px); }
+                50% { transform: translateY(-15px); }
                 100% { transform: translateY(0px); }
               }
-              .animate-float {
-                animation: float 3s ease-in-out infinite;
+              .animate-mascot-float {
+                animation: float 4s ease-in-out infinite;
               }
             `}} />
 
@@ -62,22 +62,13 @@ export function Mascot() {
                 </div>
             )}
 
-            {/* MASKOT PEREMPUAN BERKERUDUNG */}
-            <div className="w-20 h-20 bg-primary/10 backdrop-blur-sm rounded-full shadow-2xl border-4 border-primary flex items-center justify-center animate-float hover:rotate-12 transition-all duration-300 overflow-hidden">
-
-                {/* OPSI 1: Pakai Emoji (Sementara)
-                  Jika kamu belum punya file gambarnya, pakai ini dulu.
-                */}
-                <span className="text-5xl select-none" style={{ filter: "drop-shadow(0px 4px 4px rgba(0,0,0,0.1))" }}>
-                    🧕
-                </span>
-
-                {/* OPSI 2: Pakai Gambar Desain Aslimu
-                  Jika kamu punya file gambar maskotnya (misal: "maskot-cewek.png" di dalam folder public),
-                  HAPUS tag <span> emoji di atas, lalu HAPUS TANDA KOMENTAR pada tag <img /> di bawah ini:
-                */}
-                {/* <img src="/maskot-cewek.png" alt="Maskot CALOLESS" className="w-full h-full object-cover" /> */}
-
+            {/* KONTINER MASKOT (Menggunakan Foto team-1.png) */}
+            <div className="w-24 h-24 bg-white/90 backdrop-blur-sm rounded-full shadow-2xl border-4 border-primary overflow-hidden animate-mascot-float transition-all duration-300 hover:rotate-6">
+                <img
+                    src="/team-1.png"
+                    alt="Mascot CALOLESS"
+                    className="w-full h-full object-cover"
+                />
             </div>
         </div>
     );
