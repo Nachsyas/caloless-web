@@ -1,14 +1,18 @@
 "use client";
 
 import Image from "next/image";
+import { useState } from "react";
 import { toast } from "sonner";
-import { ShoppingCart, Info, UtensilsCrossed, ImageIcon } from "lucide-react";
+import { ShoppingCart, Info, UtensilsCrossed, ImageIcon, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useCartStore } from "@/store/useCartStore";
 
 export function ProductCard({ product }: { product: any }) {
   const addToCart = useCartStore((state: any) => state.addToCart || state.addItem);
+
+  // STATE BARU: Untuk mengontrol munculnya overlay nutrisi saat foto di-tap (khusus mobile)
+  const [showNutrition, setShowNutrition] = useState(false);
 
   // Mengambil relasi resep dari ERP 
   const recipeData = product.product_ingredients || [];
@@ -41,7 +45,10 @@ export function ProductCard({ product }: { product: any }) {
     <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 p-5 flex flex-col shadow-sm hover:shadow-xl transition-all duration-300 h-full group relative overflow-hidden">
 
       {/* ================= AREA FOTO BESAR & HOVER ================= */}
-      <div className="relative w-full h-64 sm:h-72 rounded-2xl overflow-hidden bg-zinc-100 mb-5 border border-zinc-100">
+      <div
+        className="relative w-full h-64 sm:h-72 rounded-2xl overflow-hidden bg-zinc-100 mb-5 border border-zinc-100 cursor-pointer"
+        onClick={() => setShowNutrition(!showNutrition)}
+      >
         {product.image_url ? (
           <Image
             src={product.image_url}
@@ -56,8 +63,25 @@ export function ProductCard({ product }: { product: any }) {
           </div>
         )}
 
+        {/* PETUNJUK MOBILE: Ikon Info kecil di pojok kanan agar orang tahu bisa di-tap */}
+        <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm p-2 rounded-full shadow-md z-10 sm:hidden">
+          <Info className="w-4 h-4 text-primary" />
+        </div>
+
         {/* OVERLAY NUTRITION FACTS */}
-        <div className="absolute inset-0 bg-black/85 text-white p-6 opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col justify-center backdrop-blur-md z-10">
+        <div className={`absolute inset-0 bg-black/85 text-white p-6 transition-all duration-500 flex flex-col justify-center backdrop-blur-md z-20 ${showNutrition ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'}`}>
+
+          {/* Tombol Close khusus HP */}
+          <button
+            className="absolute top-4 right-4 sm:hidden text-zinc-400 hover:text-white"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowNutrition(false);
+            }}
+          >
+            <X className="w-5 h-5" />
+          </button>
+
           <h5 className="font-black italic border-b border-white/20 pb-2 mb-4 flex items-center gap-2 text-primary">
             <Info className="w-5 h-5" /> NUTRITION FACTS
           </h5>
