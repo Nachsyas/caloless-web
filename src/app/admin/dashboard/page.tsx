@@ -49,7 +49,7 @@ export default function AdminDashboard() {
   const [editProductId, setEditProductId] = useState<string | null>(null);
   const [isUploadingProduct, setIsUploadingProduct] = useState(false);
 
-  // States CRUD Ingredients (Gudang) - BARU: FITUR EDIT
+  // States CRUD Ingredients (Gudang)
   const [newIng, setNewIng] = useState({ name: "", unit: "", stock_quantity: 0, calories_per_unit: 0 });
   const [isEditingIng, setIsEditingIng] = useState(false);
   const [editIngId, setEditIngId] = useState<string | null>(null);
@@ -120,6 +120,15 @@ export default function AdminDashboard() {
     insertLog("ORDER_SUCCESS", `Pesanan ${userName} telah diselesaikan.`);
   };
 
+  const handleShipOrder = async (orderId: string, userName: string) => {
+    const { error } = await supabase.from("orders").update({ status: "dikirim" }).eq("id", orderId);
+    if (!error) {
+      toast.success("Status berubah: Pesanan sedang dalam perjalanan!");
+      insertLog("ORDER_SHIPPED", `Pesanan ${userName} sedang diantar kurir.`);
+      fetchData(); // Refresh UI
+    }
+  };
+
   const handleCancelOrder = async (orderId: string, userName: string) => {
     if (!confirm("Batalkan pesanan ini?")) return;
     await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
@@ -132,6 +141,8 @@ export default function AdminDashboard() {
       case 'paid':
       case 'success':
         return <Badge className="bg-green-500 hover:bg-green-600 text-white border-0 shadow-sm px-3 py-1 text-xs">Pembayaran ✅</Badge>;
+      case 'dikirim':
+        return <Badge className="bg-blue-500 hover:bg-blue-600 text-white border-0 shadow-sm px-3 py-1 text-xs">Sedang Dikirim 🛵</Badge>;
       case 'pending':
         return <Badge variant="outline" className="border-orange-400 text-orange-600 bg-orange-50 shadow-sm px-3 py-1 text-xs">Menunggu Pembayaran ⏳</Badge>;
       case 'cancelled':
@@ -199,7 +210,7 @@ export default function AdminDashboard() {
     insertLog("UPDATE_STOK", `Stok ${name} jadi ${newStock}`);
   };
 
-  // --- INGREDIENT LOGIC (DIPERBARUI) ---
+  // --- INGREDIENT LOGIC ---
   const handleSaveIngredient = async () => {
     if (!newIng.name || !newIng.unit) return toast.error("Nama & Satuan wajib diisi!");
 
@@ -274,7 +285,7 @@ export default function AdminDashboard() {
   const handleDeleteTeam = async (id: string, name: string) => { await supabase.from("team_members").delete().eq("id", id); toast.success("Dihapus."); };
 
   // --- ANALYTICS & EXPORT LOGIC ---
-  const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid");
+  const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid" || o.status === "dikirim");
   const historyOrders = orders.filter(o => o.status === "success" || o.status === "cancelled");
 
   const dailyRevenueData = Object.entries(
@@ -420,13 +431,24 @@ export default function AdminDashboard() {
                   </div>
                   <div className="text-right flex flex-col items-center md:items-end gap-3">
                     <p className="text-2xl font-black text-primary">Rp {o.total_amount?.toLocaleString()}</p>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <Button variant="outline" onClick={() => handleCancelOrder(o.id, o.user_name)} className="rounded-full border-red-200 text-red-500 hover:bg-red-50">
                         <XCircle className="w-4 h-4 mr-2" /> Batal
                       </Button>
-                      <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="rounded-full bg-green-600 hover:bg-green-700 text-white">
-                        <CheckCircle2 className="w-4 h-4 mr-2" /> Selesai
-                      </Button>
+
+                      {o.address.includes("Ambil di Tempat") ? (
+                        <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="rounded-full bg-green-600 hover:bg-green-700 text-white">
+                          <CheckCircle2 className="w-4 h-4 mr-2" /> Selesai
+                        </Button>
+                      ) : o.status === 'dikirim' ? (
+                        <Button onClick={() => handleCompleteOrder(o.id, o.user_name, o.items_json)} className="rounded-full bg-green-600 hover:bg-green-700 text-white">
+                          <CheckCircle2 className="w-4 h-4 mr-2" /> Pesanan Sampai
+                        </Button>
+                      ) : (
+                        <Button onClick={() => handleShipOrder(o.id, o.user_name)} className="rounded-full bg-blue-600 hover:bg-blue-700 text-white">
+                          <Truck className="w-4 h-4 mr-2" /> Kirim Kurir
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -536,7 +558,6 @@ export default function AdminDashboard() {
                             <ImageIcon className="w-12 h-12 m-auto absolute inset-0 text-zinc-300" />
                           )}
 
-                          {/* Hover Preview Detail Kalori */}
                           <div className="absolute inset-0 bg-black/80 text-white p-6 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-center backdrop-blur-md">
                             <p className="text-xs font-black text-primary uppercase mb-2 flex items-center gap-2"><Info className="w-4 h-4" /> Rincian Kalori (Resep)</p>
                             <div className="space-y-1.5 overflow-y-auto max-h-32 pr-2 custom-scrollbar">
@@ -546,7 +567,7 @@ export default function AdminDashboard() {
                                   <span className="font-bold">{(ri.amount_needed * (ri.ingredients?.calories_per_unit || 0)).toFixed(0)} kkal</span>
                                 </div>
                               ))}
-                              {p.product_ingredients?.length === 0 && <p className="text-[10px] italic text-zinc-400">Hubungkan resep di Database SQL.</p>}
+                              {p.product_ingredients?.length === 0 && <p className="text-[10px] italic text-zinc-400">Belum ada resep SQL.</p>}
                             </div>
                             <div className="mt-auto pt-3 border-t border-white/20 flex justify-between items-center">
                               <span className="text-xs font-medium uppercase tracking-widest text-primary">Sistem Auto Total</span>
@@ -558,10 +579,13 @@ export default function AdminDashboard() {
                         <div className="p-5 flex flex-col flex-1">
                           <div className="flex justify-between items-start mb-1">
                             <h4 className="text-lg font-black leading-tight text-zinc-800">{p.name}</h4>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+
+                            {/* PERBAIKAN RESPONSIVE HOVER: opacity-100 di HP, opacity-0 di Laptop */}
+                            <div className="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                               <button onClick={() => startEditProduct(p)} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"><Edit3 className="w-4 h-4" /></button>
                               <button onClick={async () => { if (confirm("Hapus menu?")) { await supabase.from("products").delete().eq("id", p.id); fetchData(); } }} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><Trash2 className="w-4 h-4" /></button>
                             </div>
+
                           </div>
                           <p className="text-xs text-muted-foreground line-clamp-2 mb-4 h-8">{p.description}</p>
 
@@ -588,7 +612,7 @@ export default function AdminDashboard() {
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                {/* GUDANG BAHAN BAKU FORM (UPDATE: BISA TAMBAH / EDIT) */}
+                {/* GUDANG BAHAN BAKU FORM */}
                 <div className="bg-white p-6 rounded-3xl border shadow-lg h-fit space-y-4 border-primary/20 bg-primary/5">
                   <div className="flex justify-between items-center border-b pb-3">
                     <h3 className="font-black text-primary uppercase tracking-wider">{isEditingIng ? "Edit Gudang" : "Input Gudang"}</h3>
@@ -610,16 +634,19 @@ export default function AdminDashboard() {
                   </Button>
                 </div>
 
-                {/* GUDANG LIST (UPDATE: ADA TOMBOL EDIT & DELETE, TOMBOL +100/-100 DIHAPUS) */}
+                {/* GUDANG LIST */}
                 <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {ingredients.map(ing => (
                     <div key={ing.id} className={`bg-white p-5 rounded-2xl border shadow-sm flex flex-col hover:border-primary/50 transition-all group ${editIngId === ing.id ? 'ring-2 ring-primary border-transparent' : ''}`}>
                       <div className="flex justify-between items-start mb-2">
                         <p className="font-black text-zinc-700 text-sm uppercase">{ing.name}</p>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+
+                        {/* PERBAIKAN RESPONSIVE HOVER: opacity-100 di HP, opacity-0 di Laptop */}
+                        <div className="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                           <button onClick={() => startEditIng(ing)} className="p-1.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"><Edit3 className="w-3.5 h-3.5" /></button>
                           <button onClick={() => handleDeleteIngredient(ing.id, ing.name)} className="p-1.5 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><Trash2 className="w-3.5 h-3.5" /></button>
                         </div>
+
                       </div>
 
                       <div className="flex items-end justify-between mt-auto">
@@ -646,7 +673,7 @@ export default function AdminDashboard() {
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Laporan Performa</h2>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={exportPDF} className="gap-2 rounded-xl text-red-600 border-red-200 hover:bg-red-50"><FileText className="w-4 h-4" /> PDF</Button>
                 <Button variant="outline" onClick={exportExcel} className="gap-2 rounded-xl border-green-200 text-green-600 hover:bg-green-50"><FileSpreadsheet className="w-4 h-4" /> Excel</Button>
                 <Button variant="outline" onClick={exportWord} className="gap-2 rounded-xl border-blue-200 text-blue-600 hover:bg-blue-50"><File className="w-4 h-4" /> Word</Button>
@@ -755,7 +782,9 @@ export default function AdminDashboard() {
                         <p className="text-[10px] text-primary font-black uppercase">{member.role}</p>
                       </div>
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+
+                    {/* PERBAIKAN RESPONSIVE HOVER: opacity-100 di HP, opacity-0 di Laptop */}
+                    <div className="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:bg-blue-50" onClick={() => startEditTeam(member)}>
                         <Edit3 className="w-4 h-4" />
                       </Button>
@@ -763,6 +792,7 @@ export default function AdminDashboard() {
                         <Trash2 className="w-4 h-4" />
                       </Button>
                     </div>
+
                   </div>
                 ))}
               </div>
