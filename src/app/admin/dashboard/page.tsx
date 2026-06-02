@@ -528,8 +528,11 @@ export default function AdminDashboard() {
               {activeOrders.map((o) => (
                 <div key={o.id} className="bg-white dark:bg-zinc-900 border rounded-2xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
                   <div className="flex-1">
-                    <div className="mb-2">
+                    <div className="mb-2 flex flex-wrap gap-2">
                       {renderStatusBadge(o.status)}
+                      {o.snap_token === "cash" && (
+                        <Badge className="bg-amber-500 hover:bg-amber-600 text-white border-0 shadow-sm px-3 py-1 text-xs">💵 Tunai (COD / Cash)</Badge>
+                      )}
                     </div>
                     <h3 className="text-xl font-bold">{o.user_name} <span className="text-sm font-normal text-muted-foreground">({o.customer_phone})</span></h3>
                     <div className="mt-2 space-y-1">
@@ -588,7 +591,14 @@ export default function AdminDashboard() {
                 <tbody className="divide-y">
                   {historyOrders.map((o) => (
                     <tr key={o.id} className="hover:bg-zinc-50 transition-colors">
-                      <td className="px-6 py-4 font-bold">{o.user_name}</td>
+                      <td className="px-6 py-4 font-bold">
+                        {o.user_name}
+                        {o.snap_token === "cash" && (
+                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
+                            Cash
+                          </span>
+                        )}
+                      </td>
                       <td className="px-6 py-4">{renderStatusBadge(o.status)}</td>
                       <td className="px-6 py-4 text-xs text-muted-foreground">{new Date(o.created_at).toLocaleString('id-ID')}</td>
                       <td className="px-6 py-4 text-right font-black text-primary">Rp {o.total_amount?.toLocaleString()}</td>

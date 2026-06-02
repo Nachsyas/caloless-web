@@ -25,6 +25,8 @@ export async function POST(request: Request) {
       clientKey: process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || "",
     });
 
+    const isCash = body.paymentMethod === "cash";
+
     // 1. Create Order in Supabase
     const { data: order, error } = await supabase
       .from("orders")
@@ -32,12 +34,13 @@ export async function POST(request: Request) {
         user_name: customerDetails.first_name,
         customer_phone: customerDetails.phone,
         delivery_type: body.shippingFee > 0 || body.customerDetails.address.includes("Jarak") ? "delivery" : "pickup",
-        address: customerDetails.address,
+        address: isCash ? `${customerDetails.address} [BAYAR TUNAI]` : customerDetails.address,
         subtotal_amount: total - shippingFee, // Total belanja saja
         shipping_fee: shippingFee,
         total_amount: total, // Grand total
         status: "pending",
         items_json: items,
+        snap_token: isCash ? "cash" : null,
       })
       .select()
       .single();
@@ -45,6 +48,14 @@ export async function POST(request: Request) {
     if (error || !order) {
       console.error("Supabase Error:", error);
       return NextResponse.json({ error: "Gagal membuat order di database" }, { status: 500 });
+    }
+
+    if (isCash) {
+      return NextResponse.json({
+        success: true,
+        paymentMethod: "cash",
+        orderId: order.id
+      });
     }
 
     // 2. Prepare Item Details

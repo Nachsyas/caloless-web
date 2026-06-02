@@ -38,6 +38,7 @@ export function CartDrawer() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [deliveryType, setDeliveryType] = useState<"pickup" | "delivery">("pickup");
   const [address, setAddress] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"online" | "cash">("online");
 
   // State untuk Ongkir
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
@@ -149,6 +150,7 @@ export function CartDrawer() {
           total: finalTotal,
           discount: discount,
           shippingFee: deliveryType === "delivery" ? calculatedShipping : 0,
+          paymentMethod,
           customerDetails: {
             first_name: customerName,
             phone: customerPhone,
@@ -159,6 +161,13 @@ export function CartDrawer() {
 
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
+
+      if (data.paymentMethod === "cash") {
+        clearCart();
+        toast.success("Pesanan Berhasil Dibuat! Silakan bayar tunai saat mengambil/menerima pesanan.");
+        setIsLoading(false);
+        return;
+      }
 
       // @ts-ignore
       if (window.snap) {
@@ -340,11 +349,33 @@ export function CartDrawer() {
                     </div>
                   )}
                 </div>
+
+                {/* 4. METODE PEMBAYARAN */}
+                <Separator className="my-4" />
+                <div className="space-y-4">
+                  <h3 className="font-bold text-sm flex items-center gap-2">Metode Pembayaran</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setPaymentMethod("online")}
+                      className={`flex flex-col items-center justify-center gap-2 p-3.5 border rounded-xl transition-all cursor-pointer ${paymentMethod === "online" ? "border-primary bg-primary/5 text-primary" : "hover:bg-secondary/50 text-muted-foreground"}`}
+                    >
+                      <span className="text-xs font-bold">💳 Bayar Online</span>
+                      <span className="text-[10px] text-muted-foreground">Midtrans Gateway</span>
+                    </button>
+                    <button
+                      onClick={() => setPaymentMethod("cash")}
+                      className={`flex flex-col items-center justify-center gap-2 p-3.5 border rounded-xl transition-all cursor-pointer ${paymentMethod === "cash" ? "border-primary bg-primary/5 text-primary" : "hover:bg-secondary/50 text-muted-foreground"}`}
+                    >
+                      <span className="text-xs font-bold">💵 Bayar Tunai</span>
+                      <span className="text-[10px] text-muted-foreground">Bayar di Tempat</span>
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
-          {/* 4. TOTAL & CHECKOUT BUTTON (PERBAIKAN: shrink-0 agar tidak terdorong) */}
+          {/* 5. TOTAL & CHECKOUT BUTTON (PERBAIKAN: shrink-0 agar tidak terdorong) */}
           {items.length > 0 && (
             <div className="p-5 border-t bg-white dark:bg-zinc-950 shrink-0 z-10 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
               <div className="space-y-2 text-sm mb-4">
@@ -382,7 +413,7 @@ export function CartDrawer() {
                 disabled={isLoading || (deliveryType === "delivery" && distanceKm === null)}
                 onClick={handleCheckout}
               >
-                {isLoading ? "Memproses..." : "Bayar Sekarang"}
+                {isLoading ? "Memproses..." : paymentMethod === "cash" ? "Pesan Sekarang (Bayar Tunai)" : "Bayar Sekarang"}
               </Button>
             </div>
           )}
