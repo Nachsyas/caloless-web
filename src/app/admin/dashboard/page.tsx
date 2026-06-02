@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,11 +27,22 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"orders" | "menu" | "team" | "analytics" | "logs">("orders");
   const [menuSubTab, setMenuSubTab] = useState<"catalog" | "ingredients">("catalog");
 
-  const [orders, setOrders] = useState<any[]>([]);
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
+  const [historyOrders, setHistoryOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [ingredients, setIngredients] = useState<any[]>([]);
   const [team, setTeam] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  
+  // States for dynamic analytics data
+  const [analyticsOrders, setAnalyticsOrders] = useState<any[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+  // States for pagination of history
+  const [historyPage, setHistoryPage] = useState(1);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   const [loading, setLoading] = useState(true);
 
   // States CRUD Team
@@ -56,31 +67,129 @@ export default function AdminDashboard() {
 
   const supabase = createClient();
 
+  const activeTabRef = useRef(activeTab);
   useEffect(() => {
-    fetchData();
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  const fetchActiveOrders = async () => {
+    const { data: o } = await supabase
+      .from("orders")
+      .select("*")
+      .in("status", ["pending", "paid", "settlement", "dikirim", "challenge"])
+      .order("created_at", { ascending: false });
+    if (o) setActiveOrders(o);
+  };
+
+  const fetchHistoryOrders = async (page = 1, append = false) => {
+    setLoadingHistory(true);
+    const itemsPerPage = 20;
+    const fromRange = (page - 1) * itemsPerPage;
+    const toRange = fromRange + itemsPerPage - 1;
+
+    const { data: o } = await supabase
+      .from("orders")
+      .select("*")
+      .in("status", ["success", "cancelled", "failed"])
+      .order("created_at", { ascending: false })
+      .range(fromRange, toRange);
+
+    if (o) {
+      if (append) {
+        setHistoryOrders(prev => {
+          const ids = new Set(prev.map(item => item.id));
+          const filtered = o.filter(item => !ids.has(item.id));
+          return [...prev, ...filtered];
+        });
+      } else {
+        setHistoryOrders(o);
+      }
+      setHasMoreHistory(o.length === itemsPerPage);
+    }
+    setLoadingHistory(false);
+  };
+
+  const fetchProducts = async () => {
+    const { data: p } = await supabase.from("products").select("*, product_ingredients(*, ingredients(*))").order("name");
+    if (p) setProducts(p);
+  };
+
+  const fetchIngredients = async () => {
+    const { data: i } = await supabase.from("ingredients").select("*").order("name");
+    if (i) setIngredients(i);
+  };
+
+  const fetchTeam = async () => {
+    const { data: t } = await supabase.from("team_members").select("*").order("order_priority");
+    if (t) setTeam(t);
+  };
+
+  const fetchLogs = async () => {
+    const { data: l } = await supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(50);
+    if (l) setLogs(l);
+  };
+
+  const fetchAnalyticsData = async () => {
+    setAnalyticsLoading(true);
+    const { data: o } = await supabase
+      .from("orders")
+      .select("created_at, total_amount, items_json, status, user_name, address, customer_phone")
+      .in("status", ["success", "cancelled", "failed", "pending", "paid", "settlement", "dikirim", "challenge"]);
+    if (o) setAnalyticsOrders(o);
+    setAnalyticsLoading(false);
+  };
+
+  const fetchInitialData = async () => {
+    setLoading(true);
+    await Promise.all([
+      fetchActiveOrders(),
+      fetchHistoryOrders(1, false),
+      fetchProducts(),
+      fetchIngredients(),
+      fetchTeam(),
+      fetchLogs()
+    ]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchInitialData();
     const channel = supabase.channel("erp-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "ingredients" }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+        fetchActiveOrders();
+        fetchHistoryOrders(1, false);
+        fetchLogs();
+        if (activeTabRef.current === "analytics") {
+          fetchAnalyticsData();
+        }
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
+        fetchProducts();
+        if (activeTabRef.current === "analytics") {
+          fetchAnalyticsData();
+        }
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "ingredients" }, () => {
+        fetchIngredients();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, () => {
+        fetchTeam();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs" }, () => {
+        fetchLogs();
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const fetchData = async () => {
-    const { data: p } = await supabase.from("products").select("*, product_ingredients(*, ingredients(*))").order("name");
-    const { data: i } = await supabase.from("ingredients").select("*").order("name");
-    const { data: o } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
-    const { data: t } = await supabase.from("team_members").select("*").order("order_priority");
-    const { data: l } = await supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(50);
+  useEffect(() => {
+    if (activeTab === "analytics" && analyticsOrders.length === 0) {
+      fetchAnalyticsData();
+    }
+  }, [activeTab]);
 
-    if (p) setProducts(p);
-    if (i) setIngredients(i);
-    if (o) setOrders(o);
-    if (t) setTeam(t);
-    if (l) setLogs(l);
-    setLoading(false);
+  const fetchData = async () => {
+    await fetchInitialData();
   };
 
   const insertLog = async (type: string, desc: string) => {
@@ -139,14 +248,18 @@ export default function AdminDashboard() {
   const renderStatusBadge = (status: string) => {
     switch (status) {
       case 'paid':
+      case 'settlement':
       case 'success':
-        return <Badge className="bg-green-500 hover:bg-green-600 text-white border-0 shadow-sm px-3 py-1 text-xs">Pembayaran ✅</Badge>;
+        return <Badge className="bg-green-500 hover:bg-green-600 text-white border-0 shadow-sm px-3 py-1 text-xs">Pembayaran Lunas ✅</Badge>;
+      case 'challenge':
+        return <Badge className="bg-yellow-500 hover:bg-yellow-600 text-white border-0 shadow-sm px-3 py-1 text-xs">Pembayaran Challenge ⚠️</Badge>;
       case 'dikirim':
         return <Badge className="bg-blue-500 hover:bg-blue-600 text-white border-0 shadow-sm px-3 py-1 text-xs">Sedang Dikirim 🛵</Badge>;
       case 'pending':
         return <Badge variant="outline" className="border-orange-400 text-orange-600 bg-orange-50 shadow-sm px-3 py-1 text-xs">Menunggu Pembayaran ⏳</Badge>;
       case 'cancelled':
-        return <Badge variant="destructive" className="shadow-sm px-3 py-1 text-xs">Pesanan Dibatalkan ❌</Badge>;
+      case 'failed':
+        return <Badge variant="destructive" className="shadow-sm px-3 py-1 text-xs">Gagal / Dibatalkan ❌</Badge>;
       default:
         return <Badge variant="secondary" className="uppercase px-3 py-1 text-xs">{status}</Badge>;
     }
@@ -285,11 +398,8 @@ export default function AdminDashboard() {
   const handleDeleteTeam = async (id: string, name: string) => { await supabase.from("team_members").delete().eq("id", id); toast.success("Dihapus."); };
 
   // --- ANALYTICS & EXPORT LOGIC ---
-  const activeOrders = orders.filter(o => o.status === "pending" || o.status === "paid" || o.status === "dikirim");
-  const historyOrders = orders.filter(o => o.status === "success" || o.status === "cancelled");
-
   const dailyRevenueData = Object.entries(
-    historyOrders.filter(o => o.status === "success").reduce((acc: any, o) => {
+    analyticsOrders.filter(o => o.status === "success" || o.status === "settlement").reduce((acc: any, o) => {
       const date = new Date(o.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
       acc[date] = (acc[date] || 0) + o.total_amount;
       return acc;
@@ -297,7 +407,7 @@ export default function AdminDashboard() {
   ).map(([date, Pendapatan]) => ({ date, Pendapatan }));
 
   const itemSoldData = Object.entries(
-    historyOrders.filter(o => o.status === "success").reduce((acc: any, order) => {
+    analyticsOrders.filter(o => o.status === "success" || o.status === "settlement").reduce((acc: any, order) => {
       order.items_json?.forEach((i: any) => {
         let qty = i.quantity;
         if (i.name.toLowerCase().includes("zensum")) qty *= 3;
@@ -307,10 +417,14 @@ export default function AdminDashboard() {
     }, {})
   ).map(([name, Terjual]) => ({ name, Terjual }));
 
+  const exportData = analyticsOrders.length > 0 
+    ? analyticsOrders.filter(o => o.status === "success" || o.status === "settlement" || o.status === "cancelled" || o.status === "failed")
+    : historyOrders;
+
   const exportExcel = () => {
     try {
-      if (historyOrders.length === 0) return toast.error("Tidak ada data untuk di-export.");
-      const data = historyOrders.map(o => ({
+      if (exportData.length === 0) return toast.error("Tidak ada data untuk di-export.");
+      const data = exportData.map(o => ({
         "Waktu Transaksi": new Date(o.created_at).toLocaleString("id-ID"),
         "Status": o.status.toUpperCase(),
         "Nama Pemesan": o.user_name || "-",
@@ -333,7 +447,7 @@ export default function AdminDashboard() {
       autoTable(doc, {
         startY: 30,
         head: [['Tanggal', 'Pemesan', 'Status', 'Total']],
-        body: historyOrders.map(o => [
+        body: exportData.map(o => [
           new Date(o.created_at).toLocaleDateString("id-ID"),
           o.user_name,
           o.status.toUpperCase(),
@@ -347,7 +461,7 @@ export default function AdminDashboard() {
 
   const exportWord = async () => {
     try {
-      const rows = historyOrders.map(o => new TableRow({
+      const rows = exportData.map(o => new TableRow({
         children: [
           new TableCell({ children: [new Paragraph(new Date(o.created_at).toLocaleDateString("id-ID"))] }),
           new TableCell({ children: [new Paragraph(o.user_name)] }),
@@ -483,6 +597,22 @@ export default function AdminDashboard() {
                 </tbody>
               </table>
             </div>
+            {hasMoreHistory && (
+              <div className="flex justify-center mt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    const nextPage = historyPage + 1;
+                    setHistoryPage(nextPage);
+                    fetchHistoryOrders(nextPage, true);
+                  }}
+                  disabled={loadingHistory}
+                  className="rounded-xl px-6 py-2 text-sm font-bold shadow-sm"
+                >
+                  {loadingHistory ? "Memuat..." : "Muat Lebih Banyak Riwayat"}
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -679,33 +809,39 @@ export default function AdminDashboard() {
                 <Button variant="outline" onClick={exportWord} className="gap-2 rounded-xl border-blue-200 text-blue-600 hover:bg-blue-50"><File className="w-4 h-4" /> Word</Button>
               </div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-white p-6 rounded-3xl border shadow-sm h-80">
-                <h3 className="font-bold mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" /> Tren Penjualan</h3>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={dailyRevenueData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                    <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                    <YAxis tickFormatter={(val) => `${val / 1000}k`} tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(value: any) => `Rp ${Number(value).toLocaleString("id-ID")}`} />
-                    <Line type="monotone" dataKey="Pendapatan" stroke="#8b5cf6" strokeWidth={4} dot={{ r: 4 }} />
-                  </LineChart>
-                </ResponsiveContainer>
+            {analyticsLoading ? (
+              <div className="h-80 flex items-center justify-center font-bold text-primary animate-pulse bg-white rounded-3xl border shadow-sm">
+                Memuat data analitik...
               </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white p-6 rounded-3xl border shadow-sm h-80">
+                  <h3 className="font-bold mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" /> Tren Penjualan</h3>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={dailyRevenueData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                      <YAxis tickFormatter={(val) => `${val / 1000}k`} tick={{ fontSize: 10 }} />
+                      <Tooltip formatter={(value: any) => `Rp ${Number(value).toLocaleString("id-ID")}`} />
+                      <Line type="monotone" dataKey="Pendapatan" stroke="#8b5cf6" strokeWidth={4} dot={{ r: 4 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
 
-              <div className="bg-white p-6 rounded-3xl border shadow-sm h-80">
-                <h3 className="font-bold mb-4 flex items-center gap-2"><Package className="w-4 h-4 text-orange-500" /> Item Terlaris (Biji)</h3>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={itemSoldData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} />
-                    <Tooltip />
-                    <Bar dataKey="Terjual" fill="#f97316" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div className="bg-white p-6 rounded-3xl border shadow-sm h-80">
+                  <h3 className="font-bold mb-4 flex items-center gap-2"><Package className="w-4 h-4 text-orange-500" /> Item Terlaris (Biji)</h3>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={itemSoldData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Bar dataKey="Terjual" fill="#f97316" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
